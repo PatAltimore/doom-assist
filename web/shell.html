@@ -103,11 +103,13 @@
     .resume-banner-actions .assist-btn { font-size: 15px; padding: 6px 14px; flex: 0 0 auto; }
     /* Game controls strip: below the canvas (not overlaid on top of it --
        an overlay partially obscures the 3D view, a strip underneath
-       doesn't). Pause always shows; the twin-stick/use row only shows on
-       actual touchscreens (real mice/trackpads already have keyboard
-       access): the left stick drives forward/strafe and the right stick
-       turns and fires (see assist_set_move/assist_set_turn in assist.c
-       and setupStick below), Space uses. */
+       doesn't). The twin-stick/use row and the keyboard legend below are
+       mutually exclusive -- whichever one currently applies (see the
+       auto-detect media query and the manual force-*-controls override
+       further down) is what shows here: the left stick drives forward/
+       strafe and the right stick turns and fires (see assist_set_move/
+       assist_set_turn in assist.c and setupStick below) when touch
+       applies, Space uses either way. */
     .game-controls {
       width: 100%;
       max-width: 1100px;
@@ -124,9 +126,81 @@
       align-items: center;
       padding: 4px 16px 10px;
     }
-    @media (hover: none) and (pointer: coarse) {
+    .key-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 8px 18px;
+      width: 100%;
+      padding: 4px 16px 10px;
+      font-size: 15px;
+      color: var(--text-dim);
+    }
+    .key-legend-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .key-legend-group span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .key-legend kbd {
+      display: inline-block;
+      min-width: 1.3em;
+      padding: 2px 6px;
+      border: 1px solid var(--bevel-light);
+      border-bottom: 2px solid var(--bevel-dark);
+      border-radius: 4px;
+      background: var(--stone-dark);
+      color: var(--white);
+      font-family: inherit;
+      font-size: 15px;
+      text-align: center;
+    }
+    .control-mode-switch {
+      align-self: center;
+      margin-top: 2px;
+      padding: 5px 10px;
+      background: transparent;
+      border: 1px solid var(--bevel-light);
+      border-radius: 4px;
+      color: var(--red-bright);
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .control-mode-switch:hover { background: rgba(184, 57, 31, 0.12); }
+    /* Auto-detect default: coarse pointer (touch-sized targets) and no
+       fine pointer anywhere, not just `(pointer: coarse)` alone. `pointer`
+       only reflects the *primary* pointer's precision, and a touchscreen
+       -equipped laptop commonly reports that as coarse even with a real
+       mouse/trackpad attached and in active use -- `any-pointer: fine`
+       checks every input mechanism, not just the primary one, so it
+       correctly stays true on that hybrid hardware while still being
+       false on an actual phone or tablet. Placed after the base
+       .key-legend/.touch-controls rules above so it wins regardless of
+       source order within those rules; the manual override further below
+       is placed later still, so it wins over *this*, too. */
+    @media (pointer: coarse) and (not (any-pointer: fine)) {
+      .key-legend { display: none; }
       .touch-controls { display: flex; }
     }
+    /* Manual override for when the auto-detect above guesses wrong --
+       e.g. a touchscreen-equipped desktop that still wants the keyboard
+       legend despite (pointer: coarse), or a device whose OS changes what
+       it reports for pointer capability between orientations with a
+       detachable keyboard. Toggled by the two .control-mode-switch
+       buttons (see attachControlModeSwitch below); body-scoped classes so
+       their specificity beats the plain rules above regardless of source
+       order or which media query matched. */
+    body.force-touch-controls .key-legend { display: none; }
+    body.force-touch-controls .touch-controls { display: flex; }
+    body.force-keyboard-controls .key-legend { display: flex; }
+    body.force-keyboard-controls .touch-controls { display: none; }
     .touch-group { display: flex; gap: 14px; align-items: center; }
     /* This project's own `display: flex` above is an *author* rule, which
        always wins over the browser's built-in `[hidden] { display: none }`
@@ -532,6 +606,28 @@
             <button class="touch-btn touch-btn-small touch-btn-select" id="tc-menu-select" aria-label="Select">OK</button>
             <button class="touch-btn touch-btn-small touch-btn-back" id="tc-menu-back" aria-label="Back">BACK</button>
           </div>
+          <button id="switch-to-keyboard-btn" class="control-mode-switch" type="button">Switch to keyboard controls</button>
+        </div>
+        <!-- Shown on non-touch devices by default (see the auto-detect
+             media query in <style>); real DOOM keyboard bindings
+             (m_controls.c), not assist-mode shortcuts -- Pause isn't
+             listed since it isn't reliably mapped in this Emscripten
+             build (see assist_toggle_pause's comment in assist.c for the
+             same underlying gap on the touch side). -->
+        <div class="key-legend">
+          <div class="key-legend-group">
+            <span><kbd>&uarr;</kbd><kbd>&darr;</kbd> Move forward / back</span>
+            <span><kbd>&larr;</kbd><kbd>&rarr;</kbd> Turn</span>
+            <span><kbd>Alt</kbd> + <kbd>&larr;</kbd><kbd>&rarr;</kbd> Strafe</span>
+            <span><kbd>Shift</kbd> (hold) Run</span>
+          </div>
+          <div class="key-legend-group">
+            <span><kbd>Ctrl</kbd> Fire</span>
+            <span><kbd>Space</kbd> Use / open</span>
+            <span><kbd>Tab</kbd> Automap</span>
+            <span><kbd>1</kbd>-<kbd>8</kbd> Weapons</span>
+          </div>
+          <button id="switch-to-touch-btn" class="control-mode-switch" type="button">Switch to touch controls</button>
         </div>
       </div>
     </div>
@@ -648,6 +744,47 @@
       }
       tabs.forEach(function (tab) {
         tab.addEventListener("click", function () { activate(tab); });
+      });
+    })();
+
+    // ---- Manual override for the keyboard-legend-vs-touch-controls
+    // auto-detect (see the `(pointer: coarse) and (not (any-pointer:
+    // fine))` media query in <style>) ----
+    // That heuristic gets it wrong on real hardware in ways that aren't
+    // fixable in CSS alone -- a touchscreen-equipped desktop that still
+    // wants the keyboard legend, or a device whose OS changes what it
+    // reports for pointer capability between orientations with a
+    // detachable keyboard case. The two .control-mode-switch buttons (one
+    // embedded in each panel, so whichever one is currently showing
+    // offers a way to switch to the other) let the player just pick, and
+    // the choice is remembered per-browser via localStorage so it doesn't
+    // need re-picking every load.
+    (function attachControlModeSwitch() {
+      var STORAGE_KEY = "doom-assist-control-mode";
+      var toTouchBtn = document.getElementById("switch-to-touch-btn");
+      var toKeyboardBtn = document.getElementById("switch-to-keyboard-btn");
+
+      // Toggling a class on <body> (rather than the specific elements
+      // being shown/hidden) is what lets one flag here drive both the
+      // key legend and the touch-controls row without this function
+      // needing to know or care what either one contains.
+      function apply(mode) {
+        document.body.classList.toggle("force-touch-controls", mode === "touch");
+        document.body.classList.toggle("force-keyboard-controls", mode === "keyboard");
+      }
+
+      var saved = null;
+      try { saved = window.localStorage.getItem(STORAGE_KEY); }
+      catch (e) { /* private-browsing/storage-disabled -- fall back to the CSS auto-detect default */ }
+      if (saved === "touch" || saved === "keyboard") apply(saved);
+
+      toTouchBtn.addEventListener("click", function () {
+        apply("touch");
+        try { window.localStorage.setItem(STORAGE_KEY, "touch"); } catch (e) { /* best-effort only */ }
+      });
+      toKeyboardBtn.addEventListener("click", function () {
+        apply("keyboard");
+        try { window.localStorage.setItem(STORAGE_KEY, "keyboard"); } catch (e) { /* best-effort only */ }
       });
     })();
 
