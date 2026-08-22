@@ -1,0 +1,1214 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>DOOM — Assist Mode</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      /* Retro DOOM palette: charred metal, blood red, sickly nukage green */
+      --bg: #1a1512;
+      --stone: #2b2320;
+      --stone-dark: #120e0c;
+      --panel: #241c19;
+      --panel-border: #5c4a3a;
+      --bevel-light: #7a6248;
+      --bevel-dark: #0c0908;
+      --red: #6b1f14;
+      --red-bright: #b8391f;
+      --gray: #7a7268;
+      --text: #e8ddc8;
+      --text-dim: #a9977c;
+      --white: #f0ead8;
+    }
+    * { box-sizing: border-box; }
+    /* Stops the browser's native pull-to-refresh/rubber-band gesture from
+       triggering when scrolling reaches the top -- easy to hit by
+       accident on mobile now that portrait mode makes the page scroll. */
+    html, body { height: 100%; overscroll-behavior-y: contain; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'VT323', 'Courier New', Consolas, monospace;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .layout {
+      display: flex;
+      width: 100%;
+      align-items: stretch;
+    }
+    .game-area {
+      flex: 1 1 640px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 8px;
+      min-width: 0;
+      min-height: 0;
+      background: var(--stone-dark);
+    }
+    .game-area h1 {
+      font-size: 18px;
+      margin: 0 0 6px;
+      letter-spacing: 0.08em;
+      color: var(--white);
+      text-shadow: 1px 1px 0 var(--bevel-dark);
+    }
+    #status { font-size: 15px; color: var(--text-dim); margin-bottom: 4px; min-height: 14px; }
+    #progress { width: 300px; }
+    /* Sized by JS purely for layout (see sizeCanvasWrap below) -- unlike
+       Wolf4SDL, doomgeneric's Emscripten port creates its SDL window at a
+       fixed 640x400 (DOOMGENERIC_RESX/RESY in doomgeneric.h) with no
+       SDL_WINDOW_RESIZABLE flag, so the CSS size here never feeds back
+       into the engine's actual render resolution -- it only stretches the
+       fixed-size canvas to fit the wrapper via width/height:100% below. */
+    .canvas-wrap {
+      position: relative;
+      border: 3px solid var(--bevel-light);
+      border-right-color: var(--bevel-dark);
+      border-bottom-color: var(--bevel-dark);
+      background: #000;
+      line-height: 0;
+    }
+    canvas.emscripten {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+      image-rendering: pixelated;
+    }
+    .resume-banner {
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: 90%;
+      background: var(--panel);
+      border: 2px solid;
+      border-color: var(--bevel-light) var(--bevel-dark) var(--bevel-dark) var(--bevel-light);
+      padding: 14px 18px;
+      text-align: center;
+      z-index: 10;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65);
+    }
+    .resume-banner p { margin: 0 0 10px; color: var(--white); font-size: 17px; }
+    .resume-banner-actions { display: flex; gap: 10px; justify-content: center; }
+    .resume-banner-actions .assist-btn { font-size: 15px; padding: 6px 14px; flex: 0 0 auto; }
+    /* Game controls strip: below the canvas (not overlaid on top of it --
+       an overlay partially obscures the 3D view, a strip underneath
+       doesn't). Pause always shows; the joystick/fire/use row only shows
+       on actual touchscreens (real mice/trackpads already have keyboard
+       access), sending the same inputs as the physical controls: the
+       joystick drives mousex/mousey directly like a real mouse would
+       (see assist_apply_joystick in assist.c), Ctrl fires, Space uses. */
+    .game-controls {
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding-top: 10px;
+    }
+    .touch-controls {
+      display: none;
+      width: 100%;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 16px 10px;
+    }
+    @media (hover: none) and (pointer: coarse) {
+      .touch-controls { display: flex; }
+    }
+    .touch-group { display: flex; gap: 14px; align-items: center; }
+    /* This project's own `display: flex` above is an *author* rule, which
+       always wins over the browser's built-in `[hidden] { display: none }`
+       UA rule regardless of selector specificity -- so setting .hidden on
+       #tc-play-group/#tc-menu-group did nothing without this override,
+       and both touch control sets rendered on top of each other at once. */
+    #tc-play-group[hidden], #tc-menu-group[hidden] { display: none; }
+    /* Stylized to read as physical hardware -- radial-gradient shading for
+       a molded-plastic look, an offset solid shadow ("0 Npx 0 <color>")
+       for a raised 3D button that visibly depresses on :active. */
+    .touch-joystick {
+      position: relative;
+      width: 160px;
+      height: 160px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 42%, var(--stone) 0%, var(--stone-dark) 75%);
+      border: 3px solid var(--bevel-dark);
+      box-shadow:
+        inset 0 6px 14px rgba(0, 0, 0, 0.65),
+        inset 0 -3px 6px rgba(122, 98, 72, 0.25),
+        0 3px 6px rgba(0, 0, 0, 0.5);
+      touch-action: none;
+      pointer-events: auto;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .touch-joystick-knob {
+      position: absolute;
+      width: 72px;
+      height: 72px;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 28%, #fdfaf0, var(--white) 45%, #beb290 100%);
+      border: 2px solid var(--bevel-dark);
+      box-shadow: 0 5px 8px rgba(0, 0, 0, 0.55), inset 0 -3px 5px rgba(0, 0, 0, 0.18);
+      pointer-events: none;
+    }
+    .touch-btn {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
+      border: 3px solid var(--bevel-dark);
+      color: var(--white);
+      font-family: inherit;
+      font-size: 22px;
+      font-weight: bold;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      box-shadow:
+        0 5px 0 var(--bevel-dark),
+        0 7px 9px rgba(0, 0, 0, 0.5),
+        inset 0 2px 3px rgba(255, 255, 255, 0.3);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+      transition: transform 0.05s ease-out, box-shadow 0.05s ease-out;
+    }
+    .touch-btn:active {
+      transform: translateY(4px);
+      box-shadow:
+        0 1px 0 var(--bevel-dark),
+        0 2px 4px rgba(0, 0, 0, 0.4),
+        inset 0 2px 3px rgba(255, 255, 255, 0.15);
+    }
+    .touch-btn-fire {
+      width: 86px;
+      height: 86px;
+      font-size: 16px;
+    }
+    .touch-btn-use {
+      font-size: 13px;
+      background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
+    }
+    /* Menu-navigation cluster (Up/Down/Select/Back) -- swapped in for
+       Use/Fire whenever a menu might be showing (see pollTouchMenuMode).
+       Smaller than the play-mode buttons: four of them need to fit where
+       two did, and menu taps don't need the same big hit target combat
+       inputs do. */
+    .touch-btn-small {
+      width: 52px;
+      height: 52px;
+      font-size: 20px;
+    }
+    .touch-dpad {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .touch-btn-select {
+      background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
+      font-size: 15px;
+    }
+    .touch-btn-back {
+      font-size: 13px;
+      background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
+    }
+    .assist-panel {
+      flex: 0 0 340px;
+      max-width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border-left: 3px solid var(--bevel-dark);
+      box-shadow: inset 2px 0 0 var(--bevel-light);
+      padding: 14px;
+      overflow-y: auto;
+    }
+    .assist-panel h2 {
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--white);
+      background: var(--red);
+      margin: 18px -14px 10px;
+      padding: 6px 14px;
+      border-top: 1px solid var(--red-bright);
+      border-bottom: 2px solid var(--bevel-dark);
+    }
+    .assist-tabs {
+      display: flex;
+      margin: 0 -14px 12px;
+      background: var(--stone-dark);
+      border-bottom: 2px solid var(--bevel-dark);
+    }
+    .assist-tab {
+      flex: 1 1 auto;
+      background: var(--stone-dark);
+      color: var(--text-dim);
+      border: none;
+      border-right: 1px solid var(--bevel-dark);
+      padding: 8px 4px;
+      font-family: inherit;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .assist-tab:last-child { border-right: none; }
+    .assist-tab.active {
+      background: var(--red);
+      color: var(--white);
+      box-shadow: inset 0 -3px 0 var(--red-bright);
+    }
+    .assist-tabpanel { min-height: 0; min-width: 0; }
+    .actions-badge {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #3a9c4a;
+      animation: actions-badge-pulse 1.4s ease-out infinite;
+    }
+    @keyframes actions-badge-pulse {
+      0% { box-shadow: 0 0 0 0 rgba(58, 156, 74, 0.6); }
+      70% { box-shadow: 0 0 0 7px rgba(58, 156, 74, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(58, 156, 74, 0); }
+    }
+    .action-log-list { list-style: none; margin: 0; padding: 0; }
+    .action-log-list li {
+      background: var(--stone-dark);
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      padding: 8px 10px;
+      margin-bottom: 8px;
+    }
+    .action-log-time { display: block; color: var(--text-dim); font-size: 15px; }
+    .action-log-label { display: block; color: var(--white); font-size: 17px; margin: 2px 0 6px; }
+    .action-log-links { display: flex; flex-wrap: wrap; gap: 6px; }
+    .action-log-links .code-link { margin-top: 0; }
+    .action-log-empty { color: var(--text-dim); font-size: 15px; margin: 0; }
+    .cheat-row-compact {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .cheat-row-compact .assist-btn { font-size: 15px; padding: 8px 6px; }
+    .cheat-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    button.assist-btn {
+      background: var(--red);
+      color: var(--white);
+      border: 2px solid;
+      border-color: var(--red-bright) var(--bevel-dark) var(--bevel-dark) var(--red-bright);
+      padding: 8px 12px;
+      font-family: inherit;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+      flex: 1;
+    }
+    button.assist-btn:hover { background: var(--red-bright); }
+    button.assist-btn:active {
+      border-color: var(--bevel-dark) var(--red-bright) var(--red-bright) var(--bevel-dark);
+    }
+    button.assist-btn:disabled { opacity: 0.5; cursor: default; }
+    select.assist-select {
+      background: var(--stone-dark);
+      color: var(--text);
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      padding: 7px;
+      font-family: inherit;
+      font-size: 16px;
+    }
+    .cheat-desc { font-size: 15px; color: var(--text-dim); margin: -4px 0 10px; }
+    .hint-box {
+      background: var(--stone-dark);
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      padding: 10px;
+      font-size: 17px;
+      line-height: 1.5;
+      color: var(--white);
+    }
+    .hint-box p { margin: 0 0 8px; }
+    .code-link {
+      display: inline-block;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--white);
+      text-decoration: none;
+      background: var(--gray);
+      border: 2px solid;
+      border-color: #a39c8f var(--bevel-dark) var(--bevel-dark) #a39c8f;
+      padding: 5px 9px;
+      margin-top: 4px;
+    }
+    .code-link:hover { background: var(--red-bright); }
+    .ack-note { font-size: 15px; color: var(--text-dim); margin-top: 16px; }
+    .toast {
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--stone-dark);
+      border: 2px solid;
+      border-color: var(--bevel-light) var(--bevel-dark) var(--bevel-dark) var(--bevel-light);
+      color: var(--white);
+      padding: 8px 14px;
+      font-size: 17px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+    .toast.show { opacity: 1; }
+
+    /* Mobile portrait: stack everything in one scrolling column instead
+       of the game+sidebar side-by-side layout -- game at top, its
+       controls directly below it, then the tabbed panel. No per-section
+       reordering needed here anymore: tabs already show one panel at a
+       time regardless of viewport. */
+    @media (orientation: portrait) and (max-width: 768px) {
+      html, body { height: auto; }
+      body { overflow-y: auto; overflow-x: hidden; }
+      .layout { flex-direction: column; }
+      .game-area {
+        flex: none;
+        width: 100%;
+      }
+      .assist-panel {
+        flex: none;
+        width: 100%;
+        height: auto;
+        overflow-y: visible;
+        border-left: none;
+        border-top: 3px solid var(--bevel-dark);
+        box-shadow: inset 0 2px 0 var(--bevel-light);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="game-area">
+      <h1>DOOM — ASSIST MODE</h1>
+      <div id="status">Downloading...</div>
+      <progress id="progress" hidden max="100" value="0"></progress>
+      <div class="canvas-wrap" id="canvas-wrap">
+        <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1" width="640" height="400"></canvas>
+        <div class="resume-banner" id="resume-banner" hidden>
+          <p>Saved game found — probably from an accidental refresh.</p>
+          <div class="resume-banner-actions">
+            <button class="assist-btn" id="resume-yes">Resume</button>
+            <button class="assist-btn" id="resume-no">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="game-controls" id="game-controls">
+        <div class="touch-controls">
+          <div class="touch-joystick" id="tc-joystick" aria-label="Move / turn">
+            <div class="touch-joystick-knob" id="tc-joystick-knob"></div>
+          </div>
+          <div class="touch-group touch-group-right" id="tc-play-group">
+            <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
+            <button class="touch-btn touch-btn-fire" id="tc-fire" aria-label="Fire">FIRE</button>
+          </div>
+          <!-- Shown instead of Use/Fire whenever a menu might be on screen
+               (title/demo, pause menu, skill/episode pick, ...) -- see
+               pollTouchMenuMode below. DOOM's menus are keyboard-driven
+               (up/down cursor + select/back), not tap-a-position-on-screen,
+               so this is the touch equivalent of those four keys rather
+               than a literal touch on the menu text. -->
+          <div class="touch-group touch-group-right" id="tc-menu-group" hidden>
+            <div class="touch-dpad">
+              <button class="touch-btn touch-btn-small" id="tc-menu-up" aria-label="Menu up">▲</button>
+              <button class="touch-btn touch-btn-small" id="tc-menu-down" aria-label="Menu down">▼</button>
+            </div>
+            <button class="touch-btn touch-btn-small touch-btn-select" id="tc-menu-select" aria-label="Select">OK</button>
+            <button class="touch-btn touch-btn-small touch-btn-back" id="tc-menu-back" aria-label="Back">BACK</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="assist-panel">
+      <div class="assist-tabs" role="tablist">
+        <button id="tab-cheats" class="assist-tab" type="button" role="tab" aria-selected="false" aria-controls="cheats-view">Cheats</button>
+        <button id="tab-code" class="assist-tab active" type="button" role="tab" aria-selected="true" aria-controls="code-view">Code<span class="actions-badge" id="actions-badge" hidden></span></button>
+      </div>
+
+      <div id="cheats-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-cheats" hidden>
+        <div class="cheat-row-compact">
+          <button class="assist-btn" id="cheat-god" title="IDDQD -- cycles god mode on and off.">God Mode</button>
+          <button class="assist-btn" id="cheat-noclip" title="IDSPISPOPD -- walk through walls.">No Clip</button>
+        </div>
+        <div class="cheat-row-compact">
+          <button class="assist-btn" id="cheat-kfa" title="IDKFA -- full weapons, ammo, armor, and keys.">Give All</button>
+          <button class="assist-btn" id="cheat-behold" title="IDBEHOLDA -- reveals the whole level on the automap.">Reveal Map</button>
+        </div>
+        <div class="cheat-row-compact">
+          <button class="assist-btn" id="cheat-automap" title="Tab -- toggles DOOM's real automap.">Automap</button>
+          <button class="assist-btn" id="cheat-mypos" title="IDMYPOS -- shows your exact coordinates and facing angle.">My Position</button>
+        </div>
+        <div class="cheat-row">
+          <select class="assist-select" id="warp-level"></select>
+          <button class="assist-btn" id="cheat-warp" title="IDCLEV -- warps straight to a map.">Warp</button>
+        </div>
+        <p class="ack-note">Real DOOM cheat codes, typed live -- no unlock combo needed, unlike some other classic id Software games. Automap uses the level's own built-in fog-of-war (only tiles you've actually seen stay revealed after Reveal Map wears off).</p>
+      </div>
+
+      <div id="code-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-code">
+        <h2>Recent Actions</h2>
+        <ul class="action-log-list" id="action-log-list"></ul>
+        <p class="action-log-empty" id="action-log-empty">Nothing logged yet — play a bit.</p>
+
+        <h2>Level Hints — <span id="current-floor">E1M1</span></h2>
+        <div class="hint-box" id="hint-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Canvas sizing (pure layout -- see the .canvas-wrap comment in
+    // <style> for why this doesn't affect the engine's actual resolution
+    // the way it did for wolf3d-assist) ----
+    var GAME_RATIO = 640 / 400;
+    function sizeCanvasWrap() {
+      var wrap = document.getElementById("canvas-wrap");
+      var gameArea = document.querySelector(".game-area");
+      var isPortraitMobile = window.matchMedia("(orientation: portrait) and (max-width: 768px)").matches;
+      var availW = gameArea.clientWidth - 16;
+      var availH;
+      if (isPortraitMobile) {
+        // The page scrolls in this mode (controls/cheats/hints all stack
+        // below) -- cap well under full height so it's visually obvious
+        // there's more below instead of trying to fit everything above
+        // the fold.
+        availH = Math.round(window.innerHeight * 0.5);
+      } else {
+        var chrome = document.querySelector(".game-area h1").offsetHeight +
+                     document.getElementById("status").offsetHeight +
+                     document.getElementById("game-controls").offsetHeight + 24;
+        availH = window.innerHeight - chrome - 16;
+      }
+      var w = Math.max(availW, 320);
+      var h = w / GAME_RATIO;
+      if (h > availH && availH > 0) {
+        h = Math.max(availH, 200);
+        w = h * GAME_RATIO;
+      }
+      wrap.style.width = Math.floor(w) + "px";
+      wrap.style.height = Math.floor(h) + "px";
+    }
+    sizeCanvasWrap();
+    window.addEventListener("resize", sizeCanvasWrap);
+
+    // ---- Sidebar tabs ----
+    // Generic over however many .assist-tab buttons exist -- each one's
+    // aria-controls points at the panel it activates. "Code" defaults
+    // active since it's what links back to Code Museum (the Recent
+    // Actions log and per-level hints both live there); the other panel
+    // starts hidden.
+    (function initTabs() {
+      var tabs = Array.prototype.slice.call(document.querySelectorAll(".assist-tab"));
+      function activate(target) {
+        tabs.forEach(function (tab) {
+          var isActive = tab === target;
+          tab.classList.toggle("active", isActive);
+          tab.setAttribute("aria-selected", String(isActive));
+          var panel = document.getElementById(tab.getAttribute("aria-controls"));
+          if (panel) panel.hidden = !isActive;
+        });
+      }
+      tabs.forEach(function (tab) {
+        tab.addEventListener("click", function () { activate(tab); });
+      });
+    })();
+
+    // ---- Assist mode data ----
+    var CODE_MUSEUM_BASE = "https://blue-rock-0e6a0831e.7.azurestaticapps.net/#/doom/";
+
+    // ---- Recent Actions log ----
+    // A small de-duplicated log of "things the player just did," each
+    // tagged with the Code Museum file(s) that explain it. Keyed by
+    // `category` (one Map slot per category) rather than an append-only
+    // list: repeating the same category updates that one entry's
+    // timestamp/label in place instead of adding a new line -- otherwise
+    // e.g. every kill would add its own row and bury everything else
+    // within seconds. Deliberately only logs a handful of discrete,
+    // already-known-cheaply events (level changes, cheat use, kill/
+    // secret/weapon counts increasing) rather than continuous state like
+    // health per hit or movement, which would flood the log even with
+    // de-duplication (a real, distinct value each time, not a repeat).
+    var ACTION_LOG_WINDOW_MS = 5 * 60 * 1000;
+    var actionLogEntries = new Map(); // category -> {category, timestamp, label, links}
+    var actionLogHasUnseen = false;
+
+    function logAction(category, label, links) {
+      actionLogEntries.set(category, { category: category, timestamp: Date.now(), label: label, links: links || [] });
+      var cutoff = Date.now() - ACTION_LOG_WINDOW_MS;
+      actionLogEntries.forEach(function (entry, key) {
+        if (entry.timestamp < cutoff) actionLogEntries.delete(key);
+      });
+      actionLogHasUnseen = true;
+      renderActionLog();
+    }
+
+    function getRecentActions() {
+      return Array.from(actionLogEntries.values()).sort(function (a, b) { return b.timestamp - a.timestamp; });
+    }
+
+    // Nine hints, three per map, for the shareware episode (E1M1-E1M9,
+    // "Knee-Deep in the Dead"). Each pairs a gameplay tip with one
+    // engineering fact about the file that actually implements it.
+    var HINTS = [
+      { level: 1, name: "E1M1", tips: [
+        { text: "Every zombieman and shotgun guy on this level runs the exact same generic AI loop — only a per-monster entry in a shared table decides how it attacks and how tough it is.", slug: "p-enemy-c", label: "Enemy AI" },
+        { text: "The whole level — every sector, wall, and thing — was parsed out of WAD lumps into DOOM's map data before you took a single step.", slug: "p-setup-c", label: "Level loader" },
+        { text: "DOOM's cheat codes are typed directly during gameplay, no unlock combo required — every button in this sidebar's Cheats tab is really just typing one of these strings for you.", slug: "m-cheat-c", label: "Cheat codes" }
+      ]},
+      { level: 2, name: "E1M2", tips: [
+        { text: "Standing in glowing green nukage drains your health every tic — a sector special, the same kind of mechanism that drives doors, lifts, and every other triggered effect in the game.", slug: "p-spec-c", label: "Special line triggers" },
+        { text: "Every door and platform lift on this level opens by walking into, using, or shooting a specific linedef.", slug: "p-doors-c", label: "Door logic" },
+        { text: "Gunfire and monster growls carry through the level positionally — DOOM's sound system tracks where a sound originated so it can pan and attenuate it realistically.", slug: "s-sound-c", label: "Sound system" }
+      ]},
+      { level: 3, name: "E1M3", tips: [
+        { text: "Crushing ceilings here can flatten you in one pass if you dawdle underneath — they run on the same generic floor/ceiling-mover code as every rising platform in the game.", slug: "p-floor-c", label: "Floor and ceiling movers" },
+        { text: "Before a monster can shoot you, the game runs a fast 2D line-of-sight check between it and the player — break that line and it loses interest.", slug: "p-sight-c", label: "Line-of-sight checker" },
+        { text: "Every kill, from a zombieman to a Baron of Hell, runs through the same player-interaction code that also handles damage and pickups.", slug: "p-inter-c", label: "Player interaction" }
+      ]},
+      { level: 4, name: "E1M4", tips: [
+        { text: "A berserk pack turns your fists into one of the strongest melee weapons in the game — and floods the screen red for a moment so you don't miss the pickup.", slug: "v-video-c", label: "Damage/pickup palette flashes" },
+        { text: "Swapping weapons isn't instant — a dedicated state machine steps the gun sprite through lower/raise/fire animation frames and the idle bob offset every tic.", slug: "p-pspr-c", label: "Player sprite state machine" },
+        { text: "Heavier enemies start showing up here — still driven by the exact same shared monster state-machine as the very first zombieman you fought on E1M1.", slug: "p-enemy-c", label: "Enemy AI" }
+      ]},
+      { level: 5, name: "E1M5", tips: [
+        { text: "Cacodemons float, soak up several hits, and lob a fireball at range — treat corners as blind corners, since anything airborne can be waiting just out of sight.", slug: "p-mobj-c", label: "Map objects" },
+        { text: "Teleporter pads are just another special linedef type — stepping onto one triggers the same generic trigger system that also runs doors and lifts.", slug: "p-spec-c", label: "Special line triggers" },
+        { text: "This level's layout gets noticeably more vertical — DOOM's renderer draws floors and ceilings as horizontal spans (visplanes), not simple flat polygons.", slug: "r-plane-c", label: "Visplane renderer" }
+      ]},
+      { level: 6, name: "E1M6", tips: [
+        { text: "This is one of the mazier shareware maps — open the automap (Tab) liberally if you get turned around; it's drawn straight from the same line data the 3D renderer uses.", slug: "am-map-c", label: "Automap" },
+        { text: "DOOM never draws a wall segment it doesn't have to: a binary space partition tree lets the renderer walk the level back-to-front and skip anything fully hidden behind nearer geometry.", slug: "r-bsp-c", label: "BSP renderer" },
+        { text: "Every wall you do see was rendered as an independently-textured vertical slice — DOOM projects each 2D linedef into the strip of screen it covers.", slug: "r-segs-c", label: "Wall segment renderer" }
+      ]},
+      { level: 7, name: "E1M7", tips: [
+        { text: "Switches here can trigger crushers or hidden walls elsewhere on the map — a linedef trigger isn't limited to the door or wall you're standing at.", slug: "p-spec-c", label: "Special line triggers" },
+        { text: "Every enemy and item you see is a flat, always-camera-facing sprite scaled by distance — a billboard, not a 3D model, which is part of why DOOM ran so well in 1993.", slug: "r-things-c", label: "Sprite renderer" },
+        { text: "This level's textures were stitched together at load time from multiple smaller WAD patches into one composite image, rather than stored as single large textures.", slug: "r-data-c", label: "Texture data manager" }
+      ]},
+      { level: 8, name: "E1M8", tips: [
+        { text: "Two Barons of Hell guard the end of this episode — they run the exact same monster state-machine as every regular enemy, just with a tankier entry in the stats table.", slug: "p-enemy-c", label: "Enemy AI" },
+        { text: "Every monster, item, and projectile in the game — including the Baron — is defined by one shared table of states, sprites, and stats, rather than custom code per monster.", slug: "info-c", label: "Thing info tables" },
+        { text: "Clearing this level ends the shareware episode and hands off to the text-crawl finale screen, drawn by code dedicated entirely to that transition.", slug: "f-finale-c", label: "Finale screens" }
+      ]},
+      { level: 9, name: "E1M9", tips: [
+        { text: "You're here because you found a secret exit elsewhere in the episode — this map packs in more cacodemons than most, so open doorways carefully.", slug: "p-mobj-c", label: "Map objects" },
+        { text: "Finishing a level hands off to the intermission screen, which tallies your kill, item, and secret percentages before the next map loads.", slug: "wi-stuff-c", label: "Intermission screen" },
+        { text: "Every field of your progress — position, health, inventory, monster states, all of it — gets serialized to a save file by one dedicated file, the same one this sidebar's autosave calls into.", slug: "p-saveg-c", label: "Save game serializer" }
+      ]}
+    ];
+
+    function codeMuseumLink(slug) {
+      return CODE_MUSEUM_BASE + slug;
+    }
+
+    // ---- Recent Actions rendering ----
+    // In-place DOM reconciliation (update existing rows, only add/remove
+    // what actually changed) rather than a full rebuild on every render --
+    // a naive rebuild was confirmed, in the project this feature is
+    // ported from (wolf3d-assist), to break mid-click link interaction.
+    var codeTab = document.getElementById("tab-code");
+    var actionsBadge = document.getElementById("actions-badge");
+    var actionLogListEl = document.getElementById("action-log-list");
+    var actionLogEmptyEl = document.getElementById("action-log-empty");
+    var actionLogRows = new Map(); // category -> {li, time, label, links}
+
+    function formatRelativeTime(timestamp) {
+      var seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+      if (seconds < 5) return "just now";
+      if (seconds < 60) return seconds + "s ago";
+      return Math.round(seconds / 60) + "m ago";
+    }
+
+    function buildActionRow() {
+      var li = document.createElement("li");
+      var time = document.createElement("span"); time.className = "action-log-time";
+      var label = document.createElement("span"); label.className = "action-log-label";
+      var links = document.createElement("span"); links.className = "action-log-links";
+      li.appendChild(time); li.appendChild(label); li.appendChild(links);
+      return { li: li, time: time, label: label, links: links };
+    }
+
+    function renderActionLog() {
+      var actions = getRecentActions(); // newest-updated first
+      actionLogEmptyEl.hidden = actions.length > 0;
+
+      var seen = {};
+      actions.forEach(function (entry) {
+        seen[entry.category] = true;
+        var row = actionLogRows.get(entry.category);
+        if (!row) {
+          row = buildActionRow();
+          actionLogRows.set(entry.category, row);
+        }
+        row.time.textContent = formatRelativeTime(entry.timestamp);
+        row.label.textContent = entry.label;
+        row.links.innerHTML = "";
+        entry.links.forEach(function (link) {
+          var a = document.createElement("a");
+          a.className = "code-link";
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.href = codeMuseumLink(link.slug);
+          a.textContent = link.label + " →";
+          row.links.appendChild(a);
+        });
+        actionLogListEl.appendChild(row.li); // re-attaching an attached node just moves it
+      });
+
+      actionLogRows.forEach(function (row, category) {
+        if (!seen[category]) {
+          row.li.remove();
+          actionLogRows.delete(category);
+        }
+      });
+
+      actionsBadge.hidden = !(actionLogHasUnseen && !codeTab.classList.contains("active"));
+    }
+    setInterval(renderActionLog, 30000); // keep "2m ago" labels fresh without a new entry
+
+    // Clears the "new entry" badge once the Code tab actually becomes
+    // active -- only clears it once the relevant panel is actually the
+    // visible one, not just on a general click anywhere.
+    codeTab.addEventListener("click", function () {
+      actionLogHasUnseen = false;
+      actionsBadge.hidden = true;
+    });
+
+    // Same auto-pause-on-code-link-click behavior as the Hints panel (see
+    // below) -- consistent regardless of which section a link was opened
+    // from.
+    actionLogListEl.addEventListener("click", function (e) {
+      if (e.target.closest(".code-link") && !knownPaused) sendTogglePause();
+    });
+
+    // ---- Warp target picker (Cheats tab) ----
+    // Shareware doom1.wad only has episode 1 (E1M1-E1M9) -- IDCLEV rejects
+    // any other episode number outright when gamemode == shareware (see
+    // the cht_CheckCheat handling in st_stuff.c), so there's no "episode"
+    // selector here, just the map number.
+    var warpSelect = document.getElementById("warp-level");
+    for (var i = 1; i <= 9; i++) {
+      var o1 = document.createElement("option"); o1.value = i; o1.textContent = "E1M" + i;
+      warpSelect.appendChild(o1);
+    }
+
+    function renderHint(lvl) {
+      var h = HINTS.find(function (x) { return x.level === lvl; });
+      var box = document.getElementById("hint-box");
+      document.getElementById("current-floor").textContent = h ? h.name : ("E1M" + lvl);
+      if (!h) { box.innerHTML = "<p>No hints for this map yet.</p>"; return; }
+      box.innerHTML = h.tips.map(function (t) {
+        return "<p>" + t.text + "</p>" +
+          "<a class=\"code-link\" target=\"_blank\" rel=\"noopener\" href=\"" + codeMuseumLink(t.slug) + "\">See the code: " + t.label + " →</a>";
+      }).join("<hr style=\"border-color: var(--panel-border); margin: 10px 0;\">");
+    }
+    renderHint(1);
+
+    // ---- Autosave (protects against accidental refresh/tab-close) ----
+    // assist_autosave (assist.c) is a no-op that returns 0 unless a level
+    // is actually in progress, so it's safe to call speculatively.
+    function autosaveAndFlush() {
+      if (typeof Module === "undefined" || !Module.ccall || !Module.FS) return;
+      try {
+        var saved = Module.ccall("assist_autosave", "number", [], []);
+        if (saved) {
+          Module.FS.syncfs(false, function (err) {
+            if (err) console.error("Autosave: IndexedDB write failed", err);
+          });
+        }
+      } catch (e) { /* engine not ready yet */ }
+    }
+
+    // ---- Resume-from-autosave banner ----
+    // Offered once, right after boot, if a saved game exists. Unlike
+    // wolf3d-assist's Resume button (which has to drive the engine's
+    // Title -> Main Menu -> Load Game -> slot menu flow via synthetic
+    // keypresses, since Wolf4SDL's load routine is only reachable through
+    // that menu chain), DOOM's G_LoadGame is a plain function taking a
+    // filename -- assist_resume() (assist.c) just calls it directly, so
+    // there's no menu sequence to fake here at all.
+    var resumeBanner = document.getElementById("resume-banner");
+    var resumeCheckInterval = setInterval(function () {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        var has = Module.ccall("assist_has_autosave", "number", [], []);
+        clearInterval(resumeCheckInterval);
+        if (has) resumeBanner.hidden = false;
+      } catch (e) { /* engine not ready yet -- try again next tick */ }
+    }, 500);
+
+    document.getElementById("resume-no").addEventListener("click", function () {
+      resumeBanner.hidden = true;
+    });
+    document.getElementById("resume-yes").addEventListener("click", function () {
+      resumeBanner.hidden = true;
+      document.getElementById("canvas").focus();
+      try { Module.ccall("assist_resume", "number", [], []); } catch (e) {}
+      toast("Resuming...");
+    });
+
+    // Always follows the engine's actual current map (see
+    // assist_get_episode/assist_get_map in assist.c) -- polled since
+    // there's no push notification from the C side. Gated on
+    // assist_get_gamestate() === 0 (GS_LEVEL, doomdef.h) so a stale
+    // leftover map number from a previous game doesn't get logged while
+    // sitting at the title screen or an intermission.
+    var GS_LEVEL = 0;
+    var lastSyncedLevel = null;
+    function pollCurrentLevel() {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        var inLevel = Module.ccall("assist_get_gamestate", "number", [], []) === GS_LEVEL;
+        if (!inLevel) return;
+        var lvl = Module.ccall("assist_get_map", "number", [], []);
+        if (lvl >= 1 && lvl <= 9 && lvl !== lastSyncedLevel) {
+          var isFirstCheck = lastSyncedLevel === null;
+          lastSyncedLevel = lvl;
+          renderHint(lvl);
+          if (!isFirstCheck) {
+            autosaveAndFlush(); // don't fire on the initial title-screen read
+            var levelHints = HINTS.find(function (x) { return x.level === lvl; });
+            var levelLinks = levelHints ? levelHints.tips.slice(0, 2).map(function (t) { return { slug: t.slug, label: t.label }; }) : [];
+            logAction("level", "Reached " + (levelHints ? levelHints.name : "E1M" + lvl), levelLinks);
+          }
+        }
+      } catch (e) { /* engine not ready yet -- try again next tick */ }
+    }
+    setInterval(pollCurrentLevel, 1500); // doesn't need to be near-instant -- see perf note below
+
+    // Kills/items/secrets/weapon: player_t fields the engine already
+    // maintains for the HUD and intermission screen (see
+    // assist_get_kills/items/secrets/weapon in assist.c), diffed here the
+    // same way pollCurrentLevel diffs the map number.
+    var WEAPON_NAMES = ["Fist", "Pistol", "Shotgun", "Chaingun", "Rocket Launcher", "Plasma Rifle", "BFG9000", "Chainsaw", "Super Shotgun"];
+    var lastKills = null, lastSecrets = null, lastWeapon = null;
+    function pollProgressStats() {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        var kills = Module.ccall("assist_get_kills", "number", [], []);
+        var secrets = Module.ccall("assist_get_secrets", "number", [], []);
+        var weapon = Module.ccall("assist_get_weapon", "number", [], []);
+
+        if (lastKills !== null && kills > lastKills) {
+          logAction("kills", "Defeated " + kills + " enem" + (kills === 1 ? "y" : "ies") + " so far", [
+            { slug: "p-enemy-c", label: "Enemy AI" },
+            { slug: "p-inter-c", label: "Player interaction" }
+          ]);
+        }
+        lastKills = kills;
+
+        if (lastSecrets !== null && secrets > lastSecrets) {
+          logAction("secrets", "Found " + secrets + " secret" + (secrets === 1 ? "" : "s") + " so far", [
+            { slug: "p-spec-c", label: "Special line triggers" }
+          ]);
+        }
+        lastSecrets = secrets;
+
+        if (lastWeapon !== null && weapon !== lastWeapon && weapon >= 0 && weapon < WEAPON_NAMES.length) {
+          logAction("weapon", "Picked up the " + WEAPON_NAMES[weapon], [
+            { slug: "p-inter-c", label: "Player interaction" },
+            { slug: "p-pspr-c", label: "Player sprite state machine" }
+          ]);
+        }
+        lastWeapon = weapon;
+      } catch (e) { /* engine not ready yet -- try again next tick */ }
+    }
+    setInterval(pollProgressStats, 2000);
+
+    // ---- Toast ----
+    var toastTimer = null;
+    function toast(msg) {
+      var t = document.getElementById("toast");
+      t.textContent = msg;
+      t.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1600);
+    }
+
+    // ---- Synthetic keyboard bridge into the SDL2/Emscripten engine ----
+    function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+    function dispatchKey(type, code, key, keyCode) {
+      var ev = new KeyboardEvent(type, { key: key, code: code, bubbles: true, cancelable: true });
+      try {
+        Object.defineProperty(ev, "keyCode", { get: function () { return keyCode; } });
+        Object.defineProperty(ev, "which", { get: function () { return keyCode; } });
+      } catch (e) {}
+      // Dispatch on the canvas only. Emscripten's SDL2 keyboard handler
+      // listens on `document`, and this event has bubbles:true, so
+      // dispatching here still reaches it -- once, via the natural bubble.
+      // Dispatching on both canvas AND document (as an earlier version of
+      // this function did) delivered every keystroke twice (the direct
+      // document dispatch, plus the canvas dispatch bubbling up to
+      // document right after), which silently corrupted DOOM's
+      // multi-character cheat sequences -- e.g. "iddqd" arrived as
+      // "iiddddqqdd", which never matches any real cheat.
+      document.getElementById("canvas").dispatchEvent(ev);
+    }
+
+    var KEYS = {
+      Tab: ["Tab", "Tab", 9], Space: ["Space", " ", 32], Control: ["ControlLeft", "Control", 17],
+      Enter: ["Enter", "Enter", 13], Escape: ["Escape", "Escape", 27],
+      ArrowUp: ["ArrowUp", "ArrowUp", 38], ArrowDown: ["ArrowDown", "ArrowDown", 40]
+    };
+    // The legacy `keyCode`/`which` fields identify a *physical key*,
+    // case-insensitively, as the key's uppercase letter code (this is a
+    // DOM convention, not specific to this game) -- e.g. both 'q' and 'Q'
+    // are keyCode 81. Using the lowercase char code here instead (113 for
+    // 'q') is wrong, and dangerously so: 112-122 is also the legacy range
+    // for F1-F11, so lowercase 'p' through 'z' silently collide with
+    // F1-F11 (113='q' happened to land squarely on F2, which is why
+    // typing "iddqd" for God Mode kept opening the Save Game menu
+    // instead -- Emscripten's SDL2 keyboard translation reads this field).
+    "abcdefghijklmnopqrstuvwxyz".split("").forEach(function (c) {
+      KEYS[c] = ["Key" + c.toUpperCase(), c, c.toUpperCase().charCodeAt(0)];
+    });
+    for (var d = 0; d <= 9; d++) {
+      KEYS["Digit" + d] = ["Digit" + d, String(d), 48 + d];
+    }
+
+    async function tap(name, holdMs) {
+      var k = KEYS[name];
+      dispatchKey("keydown", k[0], k[1], k[2]);
+      await sleep(holdMs || 45);
+      dispatchKey("keyup", k[0], k[1], k[2]);
+    }
+
+    // Types a cheat code's letters (and any trailing digits) as real
+    // sequential keystrokes, exactly as if a player typed them --
+    // st_stuff.c's ST_Responder matches these one keydown at a time via
+    // cht_CheckCheat (m_cheat.c), the same 1993 code a real keyboard
+    // press would hit. Unlike Wolf3D's debug keys (wolf3d-assist's
+    // runDebugCheat), there's no key to hold down first and no message
+    // box to dismiss afterward -- DOOM's cheat codes are always live and
+    // take effect the instant the last character matches.
+    async function runCheat(code) {
+      document.getElementById("canvas").focus();
+      for (var i = 0; i < code.length; i++) {
+        var ch = code[i];
+        // KEYS has no entry for a bare digit character ("1") -- digits are
+        // keyed as "Digit1" etc. (see the KEYS table above), since that's
+        // also a valid *name* a caller might pass to tap() directly.
+        // idclev's warp digits (e.g. runCheat("idclev13")) would otherwise
+        // hit tap(undefined) and throw here.
+        await tap(/[0-9]/.test(ch) ? "Digit" + ch : ch);
+        await sleep(35);
+      }
+    }
+
+    var CHEAT_KEYS_LINK = [{ slug: "m-cheat-c", label: "Cheat codes" }];
+    document.getElementById("cheat-god").addEventListener("click", function () {
+      runCheat("iddqd");
+      toast("God mode toggled");
+      logAction("cheat:god", "Toggled God Mode", CHEAT_KEYS_LINK);
+    });
+    document.getElementById("cheat-noclip").addEventListener("click", function () {
+      runCheat("idspispopd");
+      toast("No clip toggled");
+      logAction("cheat:noclip", "Toggled No Clip", CHEAT_KEYS_LINK);
+    });
+    document.getElementById("cheat-kfa").addEventListener("click", function () {
+      runCheat("idkfa");
+      toast("Gave weapons, ammo, armor & keys");
+      logAction("cheat:kfa", "Used Give All", CHEAT_KEYS_LINK);
+    });
+    document.getElementById("cheat-behold").addEventListener("click", function () {
+      runCheat("idbeholda");
+      toast("Revealed the map");
+      logAction("cheat:behold", "Revealed the automap", CHEAT_KEYS_LINK.concat([{ slug: "am-map-c", label: "Automap" }]));
+    });
+    document.getElementById("cheat-automap").addEventListener("click", function () {
+      tap("Tab");
+      logAction("cheat:automap", "Toggled the automap", [{ slug: "am-map-c", label: "Automap" }]);
+    });
+    document.getElementById("cheat-mypos").addEventListener("click", function () {
+      runCheat("idmypos");
+      toast("Showing coordinates");
+      logAction("cheat:mypos", "Checked coordinates (IDMYPOS)", CHEAT_KEYS_LINK);
+    });
+    document.getElementById("cheat-warp").addEventListener("click", function () {
+      var map = warpSelect.value;
+      // Shareware is always episode 1 -- see the warp-select comment above.
+      runCheat("idclev1" + map);
+      toast("Warping to E1M" + map);
+      logAction("cheat:warp", "Warped to E1M" + map, CHEAT_KEYS_LINK);
+    });
+
+    // ---- Pause / resume ----
+    // Drives the engine's real pause flag via assist_toggle_pause()
+    // (assist.c) rather than reimplementing pausing -- see that
+    // function's own comment for why this goes through a direct C export
+    // instead of a synthetic Pause keypress the way wolf3d-assist does it.
+    var knownPaused = false;
+
+    function sendTogglePause() {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_toggle_pause", null, [], []); } catch (e) {}
+    }
+
+    // Tapping the game screen: toggles pause while actually playing, or
+    // advances the title/demo cycle and confirms menu items while a menu
+    // might be up (see knownInGameplay / pollTouchMenuMode below) -- the
+    // latter is what lets a touch-only player get past the attract-mode
+    // demo and into a game at all, since there's otherwise no keyboard to
+    // press Enter on. Scoped to touch input only: on desktop, a left
+    // click on the canvas already fires the weapon (BT_ATTACK from
+    // mousebfire in g_game.c), so treating clicks as pause/confirm there
+    // would make mouse play unusable. Touch has no such conflict since
+    // tapping the canvas isn't bound to any action in the touch control
+    // scheme.
+    document.getElementById("canvas").addEventListener("pointerup", function (e) {
+      if (e.pointerType !== "touch") return;
+      if (knownInGameplay) {
+        sendTogglePause();
+        toast(knownPaused ? "Resumed" : "Paused — tap the screen to resume");
+      } else {
+        tap("Enter");
+      }
+    });
+
+    function pollPaused() {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        knownPaused = Module.ccall("assist_is_paused", "number", [], []) === 1;
+      } catch (e) { /* engine not ready yet */ }
+    }
+    setInterval(pollPaused, 800);
+
+    // ---- Touch menu navigation ----
+    // A menu (title/demo, pause, skill/episode pick, save/load, ...) can
+    // be on screen at almost any point, and DOOM's menus are entirely
+    // keyboard-driven -- up/down to move the cursor, Enter to confirm,
+    // Escape to back out -- with no touch/tap-position equivalent built
+    // into the engine. Without *some* touch mapping for those four keys,
+    // a touch-only player can start the game (the title screen's attract
+    // demo just loops forever) or ever reach a menu item other than
+    // whatever the cursor defaults to. GS_LEVEL (0, doomdef.h) plus
+    // assist_get_menuactive() (assist.c) together distinguish "actually
+    // playing, no menu up" from every case where a menu might be drawn,
+    // including ones the pause/tap handler above doesn't cover (e.g. the
+    // attract-mode demo, which is GS_LEVEL but definitely not something
+    // Fire/Use should be pointed at).
+    var GS_LEVEL_FOR_TOUCH = 0;
+    var knownInGameplay = true; // assume real play until first poll says otherwise
+    var tcPlayGroup = document.getElementById("tc-play-group");
+    var tcMenuGroup = document.getElementById("tc-menu-group");
+
+    function pollTouchMenuMode() {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        var gs = Module.ccall("assist_get_gamestate", "number", [], []);
+        var menuActive = Module.ccall("assist_get_menuactive", "number", [], []) === 1;
+        knownInGameplay = gs === GS_LEVEL_FOR_TOUCH && !menuActive;
+        tcPlayGroup.hidden = !knownInGameplay;
+        tcMenuGroup.hidden = knownInGameplay;
+      } catch (e) { /* engine not ready yet */ }
+    }
+    setInterval(pollTouchMenuMode, 500);
+
+    document.getElementById("tc-menu-up").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("ArrowUp"); });
+    document.getElementById("tc-menu-down").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("ArrowDown"); });
+    document.getElementById("tc-menu-select").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("Enter"); });
+    document.getElementById("tc-menu-back").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("Escape"); });
+
+    // Auto-pause whenever a "See the code" link is opened, so the game
+    // isn't running unattended while you're reading source in the new tab.
+    document.getElementById("hint-box").addEventListener("click", function (e) {
+      if (e.target.closest(".code-link") && !knownPaused) sendTogglePause();
+    });
+
+    // ---- Touch/mobile controls ----
+    // Real hold buttons (as long as your finger is down, the key is down),
+    // not a tap -- firing/using both need continuous key state to work
+    // like the physical controls they're standing in for.
+    function bindHoldButton(el, keyName) {
+      var active = false;
+      var k = KEYS[keyName];
+      function press(e) {
+        e.preventDefault();
+        if (active) return;
+        active = true;
+        try { el.setPointerCapture(e.pointerId); } catch (err) {}
+        document.getElementById("canvas").focus();
+        dispatchKey("keydown", k[0], k[1], k[2]);
+      }
+      function release(e) {
+        if (!active) return;
+        active = false;
+        dispatchKey("keyup", k[0], k[1], k[2]);
+      }
+      el.addEventListener("pointerdown", press);
+      el.addEventListener("pointerup", release);
+      el.addEventListener("pointercancel", release);
+      el.addEventListener("pointerleave", release);
+    }
+    bindHoldButton(document.getElementById("tc-fire"), "Control");
+    bindHoldButton(document.getElementById("tc-use"), "Space");
+
+    // Virtual analog joystick for move/turn. Rather than simulating arrow
+    // keys (all-or-nothing -- the engine treats a held key as full speed
+    // the instant you cross a threshold), this feeds a proportional
+    // -100..100 value straight into assist_set_joystick (assist.c), which
+    // adds it into mousex/mousey every tic exactly like real relative
+    // mouse motion would -- so a light push moves slowly and a full push
+    // moves at full speed, like an actual stick.
+    (function setupJoystick() {
+      var base = document.getElementById("tc-joystick");
+      var knob = document.getElementById("tc-joystick-knob");
+      var maxDist = 55;
+      var deadzone = 8;
+      var pointerId = null;
+
+      function setJoystick(dx, dy) {
+        if (typeof Module === "undefined" || !Module.ccall) return;
+        try { Module.ccall("assist_set_joystick", null, ["number", "number"], [dx, dy]); }
+        catch (e) { /* engine not ready yet */ }
+      }
+
+      function update(clientX, clientY) {
+        var rect = base.getBoundingClientRect();
+        var dx = clientX - (rect.left + rect.width / 2);
+        var dy = clientY - (rect.top + rect.height / 2);
+        var dist = Math.sqrt(dx * dx + dy * dy);
+        var clamped = Math.min(dist, maxDist);
+        var angle = Math.atan2(dy, dx);
+        var kx = Math.cos(angle) * clamped, ky = Math.sin(angle) * clamped;
+        knob.style.transform = "translate(calc(-50% + " + kx + "px), calc(-50% + " + ky + "px))";
+
+        if (dist < deadzone) { setJoystick(0, 0); return; }
+        var pct = clamped / maxDist; // 0..1, proportional to push distance
+        setJoystick(Math.round((kx / clamped) * pct * 100), Math.round((ky / clamped) * pct * 100));
+      }
+
+      function reset() {
+        knob.style.transform = "translate(-50%, -50%)";
+        setJoystick(0, 0);
+      }
+
+      base.addEventListener("pointerdown", function (e) {
+        e.preventDefault();
+        pointerId = e.pointerId;
+        // Without this, dragging past the joystick's own edges hands the
+        // gesture to whatever element is physically under the finger next,
+        // which lacks touch-action:none -- the browser then tries its
+        // native overscroll/bounce gesture there, which is the "error
+        // sound" this fixes. Capturing keeps the whole drag on this
+        // element regardless of where the finger wanders.
+        try { base.setPointerCapture(e.pointerId); } catch (err) {}
+        document.getElementById("canvas").focus();
+        update(e.clientX, e.clientY);
+      });
+      window.addEventListener("pointermove", function (e) {
+        if (e.pointerId !== pointerId) return;
+        update(e.clientX, e.clientY);
+      });
+      function endDrag(e) {
+        if (e.pointerId !== pointerId) return;
+        pointerId = null;
+        reset();
+      }
+      window.addEventListener("pointerup", endDrag);
+      window.addEventListener("pointercancel", endDrag);
+    })();
+
+    // ---- Emscripten module wiring ----
+    var statusElement = document.getElementById("status");
+    var progressElement = document.getElementById("progress");
+    var canvasElement = document.getElementById("canvas");
+
+    canvasElement.addEventListener("webglcontextlost", function (e) {
+      alert("WebGL context lost. You will need to reload the page.");
+      e.preventDefault();
+    }, false);
+
+    var setStatus = function (text) {
+      if (!setStatus.last) setStatus.last = { time: Date.now(), text: "" };
+      if (text === setStatus.last.text) return;
+      var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+      var now = Date.now();
+      if (m && now - setStatus.last.time < 30) return;
+      setStatus.last.time = now;
+      setStatus.last.text = text;
+      if (m) {
+        progressElement.value = parseInt(m[2]) * 100;
+        progressElement.max = parseInt(m[4]) * 100;
+        progressElement.hidden = false;
+      } else {
+        progressElement.value = null;
+        progressElement.max = null;
+        progressElement.hidden = true;
+      }
+      statusElement.innerHTML = text;
+    };
+
+    var Module = {
+      canvas: canvasElement,
+      setStatus: setStatus,
+      totalDependencies: 0,
+      monitorRunDependencies: function (left) {
+        this.totalDependencies = Math.max(this.totalDependencies, left);
+        setStatus(left ? "Preparing... (" + (this.totalDependencies - left) + "/" + this.totalDependencies + ")" : "All downloads complete.");
+      },
+      // Save games (see assist_init in assist.c, which points savegamedir
+      // here) go to /save, a separate IndexedDB-backed mount from the
+      // read-only preloaded shareware WAD at /, so autosaves survive a
+      // page reload.
+      preRun: [function () {
+        FS.mkdir("/save");
+        FS.mount(FS.filesystems.IDBFS, {}, "/save");
+        Module.addRunDependency("assist-idbfs-init");
+        FS.syncfs(true, function (err) {
+          if (err) console.error("Autosave: IndexedDB read failed", err);
+          Module.removeRunDependency("assist-idbfs-init");
+        });
+      }]
+    };
+    setStatus("Downloading...");
+    window.onerror = function () {
+      setStatus("Exception thrown, see JavaScript console");
+    };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

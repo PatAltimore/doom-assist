@@ -1,0 +1,16 @@
+.claude
+
+# Emscripten SDK toolchain (fetched by tools/emsdk-env.sh, not project source)
+tools/
+
+# Build outputs (rebuilt fresh by CI, not committed)
+engine/index.html
+engine/index.js
+engine/index.wasm
+engine/index.data
+engine/build-em/
+engine/doom1.wad
+
+# OS cruft
+.DS_Store
+Thumbs.db

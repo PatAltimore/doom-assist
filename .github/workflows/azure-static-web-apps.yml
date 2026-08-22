@@ -1,0 +1,70 @@
+name: Deploy to Azure Static Web Apps
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [main]
+
+jobs:
+  build_and_deploy:
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.action != 'closed')
+    runs-on: ubuntu-latest
+    name: Build and deploy
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache emsdk
+        uses: actions/cache@v4
+        with:
+          path: tools/emsdk
+          key: emsdk-6.0.6-${{ runner.os }}
+
+      - name: Install Emscripten SDK
+        run: |
+          if [ ! -d tools/emsdk/upstream ]; then
+            rm -rf tools/emsdk
+            git clone https://github.com/emscripten-core/emsdk.git tools/emsdk
+            (cd tools/emsdk && ./emsdk install 6.0.6)
+          fi
+          cd tools/emsdk
+          ./emsdk activate 6.0.6
+
+      - name: Build engine (wasm)
+        run: |
+          source tools/emsdk/emsdk_env.sh
+          cd engine
+          bash build-emscripten.sh
+
+      - name: Assemble deploy folder
+        run: |
+          mkdir -p dist
+          cp engine/index.html engine/index.js engine/index.wasm engine/index.data dist/
+          cp staticwebapp.config.json dist/
+
+      - name: Deploy to Azure Static Web Apps
+        id: deploy
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: upload
+          app_location: dist
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true
+
+  close_pull_request:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    name: Close PR staging environment
+    steps:
+      - uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: close

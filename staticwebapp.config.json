@@ -1,0 +1,9 @@
+{
+  "mimeTypes": {
+    ".wasm": "application/wasm",
+    ".data": "application/octet-stream"
+  },
+  "globalHeaders": {
+    "Cache-Control": "no-cache, must-revalidate"
+  }
+}
