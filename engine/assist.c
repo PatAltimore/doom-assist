@@ -25,12 +25,16 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include <emscripten.h>
 
-#include "doomdef.h"    // gamestate_t, GS_LEVEL
+#include "doomdef.h"    // gamestate_t, GS_LEVEL, ML_MAPPED/ML_DONTDRAW
 #include "doomstat.h"   // gameepisode, gamemap, paused, gamestate, players[]
 #include "g_game.h"      // G_SaveGame, G_LoadGame
 #include "p_saveg.h"     // P_SaveGameFile -- builds the on-disk save filename
+#include "r_state.h"     // numlines, lines[], numsectors, sectors[]
+#include "p_mobj.h"      // mobj_t, mobjinfo_t
+#include "p_local.h"     // thinkercap, P_MobjThinker -- for walking live things (keys)
 
 // -----------------------------------------------------------------------
 // Level / progress readers
@@ -205,6 +209,258 @@ void assist_apply_touch_controls(int *forward, int *side, short *angleturn)
         // this function's call site: pushing right (positive dx) turns
         // right, which *decreases* angleturn.
         *angleturn -= (short)(assist_turn_dx * 1280 / 100); // +-100 -> +-1280 == angleturn[1]
+}
+
+// -----------------------------------------------------------------------
+// Fog-of-war map
+// -----------------------------------------------------------------------
+// wolf3d-assist had to build its own explored-tile tracker from scratch,
+// because Wolf3D has no automap at all. DOOM already has one (am_map.c),
+// including its own fog-of-war -- every line has an ML_MAPPED flag the
+// engine sets the instant it's been seen, which is exactly the "have I
+// explored this?" bit a fog-of-war map needs -- so there's nothing to
+// track here either. What DOOM's automap *doesn't* do is call out
+// secrets, keys, teleporters, or the exit; those are the reason for a
+// second, custom-drawn map in the sidebar (web/shell.html) instead of
+// just pointing the Automap cheat button at the built-in one.
+//
+// All coordinates below are converted from DOOM's internal fixed-point
+// (fixed_t, 16.16) down to plain map units via >>FRACBITS before being
+// handed to JS -- there's no reason for the browser side to know or care
+// about fixed-point.
+
+#define ASSIST_MAXLINES 4096 // generous headroom over any shareware map's real line count
+static int assist_line_buf[ASSIST_MAXLINES * 5]; // per line: x1,y1,x2,y2,kind
+
+// kind values written into assist_line_buf; 0 means "don't draw this
+// line" (unseen, or ML_DONTDRAW), matching AM_drawWalls' own skip rule.
+#define ASSIST_LINE_NONE   0
+#define ASSIST_LINE_WALL   1 // one-sided -- a solid, unpassable wall
+#define ASSIST_LINE_INNER  2 // two-sided -- a step, door, or open boundary
+
+// Recomputed on every call rather than cached: numlines for a shareware
+// map tops out in the low hundreds, so re-walking it a couple of times a
+// second (however often web/shell.html polls the Map tab) costs nothing
+// worth caching for -- see this project's other perf notes (e.g.
+// pollCurrentLevel in shell.html) for where that tradeoff has actually
+// mattered, which is walking thousands of entries every single frame,
+// not hundreds a couple of times a second.
+EMSCRIPTEN_KEEPALIVE int assist_get_map_line_count(void)
+{
+    return numlines < ASSIST_MAXLINES ? numlines : ASSIST_MAXLINES;
+}
+
+EMSCRIPTEN_KEEPALIVE int *assist_get_map_lines(void)
+{
+    int i, n = assist_get_map_line_count();
+    for (i = 0; i < n; i++)
+    {
+        line_t *ld = &lines[i];
+        int *out = &assist_line_buf[i * 5];
+        int kind = ASSIST_LINE_NONE;
+
+        // Mirrors AM_drawWalls' own visibility rule exactly (am_map.c):
+        // only a line the player has actually walked past (ML_MAPPED)
+        // draws, and even then never one flagged never-draw.
+        if ((ld->flags & ML_MAPPED) && !(ld->flags & ML_DONTDRAW))
+            kind = ld->backsector ? ASSIST_LINE_INNER : ASSIST_LINE_WALL;
+
+        out[0] = ld->v1->x >> FRACBITS;
+        out[1] = ld->v1->y >> FRACBITS;
+        out[2] = ld->v2->x >> FRACBITS;
+        out[3] = ld->v2->y >> FRACBITS;
+        out[4] = kind;
+    }
+    return assist_line_buf;
+}
+
+// Map bounds in the same map-unit space as assist_get_map_lines, so
+// shell.html can scale/center the canvas to whatever this level's actual
+// size is instead of a guessed or hardcoded one. Unlike the line buffer
+// above, this covers the *whole* level regardless of fog-of-war -- it's
+// just a coordinate range, not a spoiler, the same way a paper map's
+// edges don't reveal what's drawn on it.
+static int assist_bounds_buf[4]; // xmin, ymin, xmax, ymax
+
+EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
+{
+    int i, n = numlines;
+    int xmin = INT_MAX, ymin = INT_MAX, xmax = INT_MIN, ymax = INT_MIN;
+    // Same "no level has loaded yet" window as assist_scan_pois's guard --
+    // harmless here either way (numlines is 0, so the loop below just
+    // never runs), but without this, an early caller would get
+    // INT_MAX/INT_MIN back instead of a real (if empty) box, which breaks
+    // shell.html's span/scale math outright rather than just drawing
+    // nothing.
+    if (n == 0)
+    {
+        assist_bounds_buf[0] = assist_bounds_buf[1] = assist_bounds_buf[2] = assist_bounds_buf[3] = 0;
+        return assist_bounds_buf;
+    }
+    for (i = 0; i < n; i++)
+    {
+        line_t *ld = &lines[i];
+        int xs[2] = { ld->v1->x >> FRACBITS, ld->v2->x >> FRACBITS };
+        int ys[2] = { ld->v1->y >> FRACBITS, ld->v2->y >> FRACBITS };
+        int j;
+        for (j = 0; j < 2; j++)
+        {
+            if (xs[j] < xmin) xmin = xs[j];
+            if (xs[j] > xmax) xmax = xs[j];
+            if (ys[j] < ymin) ymin = ys[j];
+            if (ys[j] > ymax) ymax = ys[j];
+        }
+    }
+    assist_bounds_buf[0] = xmin;
+    assist_bounds_buf[1] = ymin;
+    assist_bounds_buf[2] = xmax;
+    assist_bounds_buf[3] = ymax;
+    return assist_bounds_buf;
+}
+
+// Points of interest: secrets, keys, teleporters, and the exit. Shown
+// unconditionally, regardless of fog-of-war -- unlike the walls above,
+// these are the whole point of this feature (per the user: "highlight
+// secrets, keys, portals, exits... to help you finish a level"), a
+// deliberate strategy-guide-style spoiler layered on top of an otherwise
+// honest explored-so-far map, not an accident of how it's implemented.
+//
+// Secret sectors: sector->special is a plain vanilla-DOOM sector special
+// number, and 9 means "secret, not yet entered" (P_PlayerInSpecialSector,
+// p_spec.c, sets it back to 0 the instant the player steps into it) --
+// so a live scan for special==9 already gives exactly the secrets not
+// yet found, with no bookkeeping needed on this end either.
+//
+// Keys: found by walking the live thinker list (thinkercap, p_tick.c)
+// for mobj_t entries -- identified the same way the engine itself tells
+// a "thinker" apart from a "mobj thinker", by comparing its think
+// function against P_MobjThinker -- and checking each one's doomednum
+// (mobj->info->doomednum, i.e. the WAD thing-type number, confirmed
+// against info.c: 5/13/6 are the blue/red/yellow keyCARDs, 39/38/40 the
+// yellow/red/blue skull keys) against the six numbers that mean "a key
+// card or skull is sitting here, uncollected." Once picked up, a key's
+// mobj is removed from this list entirely, so -- like secrets above --
+// an already-found key just naturally stops appearing, with no separate
+// "found" tracking needed.
+//
+// Teleporters and the exit are both just specific line->special numbers,
+// confirmed directly against the case labels that actually call
+// EV_Teleport/G_ExitLevel/G_SecretExitLevel (p_spec.c, p_switch.c) rather
+// than assumed from memory. Marked at each line's midpoint.
+#define ASSIST_POI_SECRET     1
+#define ASSIST_POI_KEY_BLUE   2
+#define ASSIST_POI_KEY_RED    3
+#define ASSIST_POI_KEY_YELLOW 4
+#define ASSIST_POI_TELEPORT   5
+#define ASSIST_POI_EXIT       6
+
+#define ASSIST_MAXPOI 64
+static int assist_poi_buf[ASSIST_MAXPOI * 3]; // per POI: x, y, type
+static int assist_poi_count;
+
+static void assist_poi_add(int x, int y, int type)
+{
+    if (assist_poi_count >= ASSIST_MAXPOI)
+        return;
+    assist_poi_buf[assist_poi_count * 3 + 0] = x;
+    assist_poi_buf[assist_poi_count * 3 + 1] = y;
+    assist_poi_buf[assist_poi_count * 3 + 2] = type;
+    assist_poi_count++;
+}
+
+static void assist_scan_pois(void)
+{
+    int i;
+    thinker_t *th;
+
+    assist_poi_count = 0;
+
+    // thinkercap (p_tick.c) is a circular sentinel node that only becomes
+    // self-referencing once P_InitThinkers() runs, which happens as part
+    // of loading a level -- before that (e.g. shell.html's poll firing in
+    // the brief window right after boot, before even the attract-mode
+    // demo has loaded its own level), thinkercap.next is still its
+    // zero-initialized default, NULL, and walking it as a list would
+    // dereference that NULL immediately. numsectors is 0 for that exact
+    // same "no level has ever loaded yet" window, and 0 the rest of the
+    // time only during a state that could never call this in the first
+    // place, so it doubles as a cheap, always-correct guard here.
+    if (numsectors == 0)
+        return;
+
+    for (i = 0; i < numsectors; i++)
+        if (sectors[i].special == 9) // secret, not yet entered
+            assist_poi_add(sectors[i].soundorg.x >> FRACBITS,
+                            sectors[i].soundorg.y >> FRACBITS,
+                            ASSIST_POI_SECRET);
+
+    for (th = thinkercap.next; th != &thinkercap; th = th->next)
+    {
+        mobj_t *mo;
+        int type;
+        if (th->function.acp1 != (actionf_p1)P_MobjThinker)
+            continue;
+        mo = (mobj_t *)th;
+        switch (mo->info->doomednum)
+        {
+            case 5:  type = ASSIST_POI_KEY_BLUE;   break;
+            case 40: type = ASSIST_POI_KEY_BLUE;   break;
+            case 13: type = ASSIST_POI_KEY_RED;    break;
+            case 38: type = ASSIST_POI_KEY_RED;    break;
+            case 6:  type = ASSIST_POI_KEY_YELLOW; break;
+            case 39: type = ASSIST_POI_KEY_YELLOW; break;
+            default: type = 0; break;
+        }
+        if (type)
+            assist_poi_add(mo->x >> FRACBITS, mo->y >> FRACBITS, type);
+    }
+
+    for (i = 0; i < numlines; i++)
+    {
+        int special = lines[i].special;
+        int type = 0;
+        if (special == 39 || special == 97 || special == 125 || special == 126)
+            type = ASSIST_POI_TELEPORT;
+        else if (special == 11 || special == 51 || special == 52 || special == 124)
+            type = ASSIST_POI_EXIT;
+        if (type)
+            assist_poi_add((lines[i].v1->x + lines[i].v2->x) / 2 >> FRACBITS,
+                            (lines[i].v1->y + lines[i].v2->y) / 2 >> FRACBITS,
+                            type);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE int assist_get_poi_count(void)
+{
+    assist_scan_pois();
+    return assist_poi_count;
+}
+
+// Always call assist_get_poi_count() first -- it's what actually runs the
+// scan; this just hands back the buffer that call filled in, the same
+// two-step pattern assist_get_map_lines/assist_get_map_line_count uses.
+EMSCRIPTEN_KEEPALIVE int *assist_get_poi_data(void)
+{
+    return assist_poi_buf;
+}
+
+// Player position (map units) and facing (degrees, 0-359, DOOM's
+// counterclockwise-from-east convention) for the "you are here" marker.
+// angle_t is a full 32-bit binary angle measure (BAM) -- turning it into
+// degrees is just rescaling the whole unsigned range down to 0-359.
+EMSCRIPTEN_KEEPALIVE int assist_get_player_x(void)
+{
+    return players[consoleplayer].mo ? players[consoleplayer].mo->x >> FRACBITS : 0;
+}
+EMSCRIPTEN_KEEPALIVE int assist_get_player_y(void)
+{
+    return players[consoleplayer].mo ? players[consoleplayer].mo->y >> FRACBITS : 0;
+}
+EMSCRIPTEN_KEEPALIVE int assist_get_player_angle(void)
+{
+    if (!players[consoleplayer].mo)
+        return 0;
+    return (int)(((double)players[consoleplayer].mo->angle / 4294967296.0) * 360.0);
 }
 
 // -----------------------------------------------------------------------

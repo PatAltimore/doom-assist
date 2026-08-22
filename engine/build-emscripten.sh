@@ -27,7 +27,7 @@ SRCS=(
 )
 
 CFLAGS="-DFEATURE_SOUND -sUSE_SDL=2 -sUSE_SDL_MIXER=2 -sSDL2_MIXER_FORMATS=['mid'] -O2"
-LDFLAGS="-sASYNCIFY -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web --preload-file doom1.wad --shell-file ../web/shell.html -sEXPORTED_FUNCTIONS=_main,_assist_get_episode,_assist_get_map,_assist_get_gamestate,_assist_get_kills,_assist_get_items,_assist_get_secrets,_assist_get_weapon,_assist_is_paused,_assist_toggle_pause,_assist_get_menuactive,_assist_has_autosave,_assist_autosave,_assist_resume,_assist_set_move,_assist_set_turn -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPU8,FS -lidbfs.js -O2"
+LDFLAGS="-sASYNCIFY -sINITIAL_MEMORY=64MB -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web --preload-file doom1.wad --shell-file ../web/shell.html -sEXPORTED_FUNCTIONS=_main,_assist_get_episode,_assist_get_map,_assist_get_gamestate,_assist_get_kills,_assist_get_items,_assist_get_secrets,_assist_get_weapon,_assist_is_paused,_assist_toggle_pause,_assist_get_menuactive,_assist_has_autosave,_assist_autosave,_assist_resume,_assist_set_move,_assist_set_turn,_assist_get_map_line_count,_assist_get_map_lines,_assist_get_map_bounds,_assist_get_poi_count,_assist_get_poi_data,_assist_get_player_x,_assist_get_player_y,_assist_get_player_angle -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,HEAPU8,HEAP32,FS -lidbfs.js -O2"
 
 mkdir -p build-em
 # doomgeneric's IWAD search (d_iwad.c) looks for lowercase "doom1.wad" in

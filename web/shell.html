@@ -375,6 +375,45 @@
       font-size: 16px;
     }
     .cheat-desc { font-size: 15px; color: var(--text-dim); margin: -4px 0 10px; }
+    .map-wrap {
+      background: #000;
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      line-height: 0;
+      margin-bottom: 10px;
+    }
+    #map-canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 1 / 1;
+    }
+    .map-legend {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px 10px;
+      font-size: 15px;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+    .map-legend-item { display: flex; align-items: center; gap: 6px; }
+    .map-legend-swatch {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 1px solid var(--bevel-dark);
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .map-legend-you {
+      width: 0;
+      height: 0;
+      border: none;
+      border-radius: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 11px solid var(--white);
+    }
     .hint-box {
       background: var(--stone-dark);
       border: 2px solid;
@@ -499,8 +538,27 @@
 
     <div class="assist-panel">
       <div class="assist-tabs" role="tablist">
+        <button id="tab-map" class="assist-tab" type="button" role="tab" aria-selected="false" aria-controls="map-view">Map</button>
         <button id="tab-cheats" class="assist-tab" type="button" role="tab" aria-selected="false" aria-controls="cheats-view">Cheats</button>
         <button id="tab-code" class="assist-tab active" type="button" role="tab" aria-selected="true" aria-controls="code-view">Code<span class="actions-badge" id="actions-badge" hidden></span></button>
+      </div>
+
+      <div id="map-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-map" hidden>
+        <div class="map-wrap">
+          <canvas id="map-canvas" width="320" height="320"></canvas>
+        </div>
+        <div class="map-legend">
+          <div class="map-legend-item"><span class="map-legend-swatch map-legend-you"></span>You</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:var(--white)"></span>Wall</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#6b5c46"></span>Passage</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8963a"></span>Secret</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3a6fe8"></span>Blue key</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8403a"></span>Red key</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8e13a"></span>Yellow key</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#b03ae8"></span>Teleporter</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c"></span>Exit</div>
+        </div>
+        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, teleporters, and the exit are always marked, even in unexplored territory.</p>
       </div>
 
       <div id="cheats-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-cheats" hidden>
@@ -844,6 +902,7 @@
         if (lvl >= 1 && lvl <= 9 && lvl !== lastSyncedLevel) {
           var isFirstCheck = lastSyncedLevel === null;
           lastSyncedLevel = lvl;
+          mapBounds = null; // re-fetch for the new level's actual geometry (see drawMap below)
           renderHint(lvl);
           if (!isFirstCheck) {
             autosaveAndFlush(); // don't fire on the initial title-screen read
@@ -894,6 +953,106 @@
       } catch (e) { /* engine not ready yet -- try again next tick */ }
     }
     setInterval(pollProgressStats, 2000);
+
+    // ---- Fog-of-war map ----
+    // Draws DOOM's own wall/line data (see assist_get_map_lines's comment
+    // in assist.c for why this is a wireframe of real lines rather than a
+    // tile grid the way wolf3d-assist's map is) into a dedicated canvas,
+    // plus the secret/key/teleporter/exit markers the native automap
+    // (Tab, in the Cheats tab) has no concept of at all.
+    var MAP_POI_COLORS = { 1: "#e8963a", 2: "#3a6fe8", 3: "#e8403a", 4: "#e8e13a", 5: "#b03ae8", 6: "#3ae85c" };
+    var mapCanvas = document.getElementById("map-canvas");
+    var mapCtx = mapCanvas.getContext("2d");
+    var mapBounds = null; // {xmin,ymin,xmax,ymax}; null until fetched, and reset on every level change (pollCurrentLevel above)
+
+    function refreshMapBounds() {
+      if (typeof Module === "undefined" || !Module.ccall || !Module.HEAP32) return;
+      try {
+        var ptr = Module.ccall("assist_get_map_bounds", "number", [], []);
+        var b = Module.HEAP32.subarray(ptr / 4, ptr / 4 + 4);
+        mapBounds = { xmin: b[0], ymin: b[1], xmax: b[2], ymax: b[3] };
+      } catch (e) { /* engine not ready yet */ }
+    }
+
+    function drawMap() {
+      if (typeof Module === "undefined" || !Module.ccall || !Module.HEAP32) return;
+      if (!mapBounds) refreshMapBounds();
+      if (!mapBounds) return;
+      try {
+        var w = mapCanvas.width, h = mapCanvas.height;
+        mapCtx.fillStyle = "#000";
+        mapCtx.fillRect(0, 0, w, h);
+
+        var spanX = Math.max(mapBounds.xmax - mapBounds.xmin, 1);
+        var spanY = Math.max(mapBounds.ymax - mapBounds.ymin, 1);
+        var pad = 12;
+        var scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+        // DOOM map coordinates increase "north" (up), like a paper map,
+        // but canvas Y increases downward -- flip it here, once, rather
+        // than juggling the sign everywhere below that uses Y.
+        function toCanvas(mx, my) {
+          return [
+            pad + (mx - mapBounds.xmin) * scale,
+            h - pad - (my - mapBounds.ymin) * scale
+          ];
+        }
+
+        var lineCount = Module.ccall("assist_get_map_line_count", "number", [], []);
+        var linesPtr = Module.ccall("assist_get_map_lines", "number", [], []);
+        // Re-sliced every draw: ALLOW_MEMORY_GROWTH can detach/replace the
+        // underlying buffer, so a cached typed-array view would go stale.
+        var lineData = Module.HEAP32.subarray(linesPtr / 4, linesPtr / 4 + lineCount * 5);
+        mapCtx.lineWidth = 1;
+        for (var i = 0; i < lineCount; i++) {
+          var kind = lineData[i * 5 + 4];
+          if (kind === 0) continue; // not yet seen -- see ASSIST_LINE_NONE in assist.c
+          var p1 = toCanvas(lineData[i * 5 + 0], lineData[i * 5 + 1]);
+          var p2 = toCanvas(lineData[i * 5 + 2], lineData[i * 5 + 3]);
+          mapCtx.strokeStyle = kind === 1 ? "#f0ead8" : "#6b5c46"; // 1 = solid wall, 2 = step/door/passage
+          mapCtx.beginPath();
+          mapCtx.moveTo(p1[0], p1[1]);
+          mapCtx.lineTo(p2[0], p2[1]);
+          mapCtx.stroke();
+        }
+
+        // assist_get_poi_count() is what actually runs the scan (secrets,
+        // live keys, teleporter/exit lines) -- assist_get_poi_data() just
+        // hands back the buffer it filled in, so count must be read first.
+        var poiCount = Module.ccall("assist_get_poi_count", "number", [], []);
+        var poiPtr = Module.ccall("assist_get_poi_data", "number", [], []);
+        var poiData = Module.HEAP32.subarray(poiPtr / 4, poiPtr / 4 + poiCount * 3);
+        for (var j = 0; j < poiCount; j++) {
+          var pp = toCanvas(poiData[j * 3 + 0], poiData[j * 3 + 1]);
+          mapCtx.fillStyle = MAP_POI_COLORS[poiData[j * 3 + 2]] || "#ffffff";
+          mapCtx.beginPath();
+          mapCtx.arc(pp[0], pp[1], 5, 0, Math.PI * 2);
+          mapCtx.fill();
+        }
+
+        var px = Module.ccall("assist_get_player_x", "number", [], []);
+        var py = Module.ccall("assist_get_player_y", "number", [], []);
+        var pangle = Module.ccall("assist_get_player_angle", "number", [], []);
+        var pc = toCanvas(px, py);
+        var rad = (pangle * Math.PI) / 180;
+        var dx = Math.cos(rad), dy = -Math.sin(rad); // negated: canvas Y is flipped vs. map Y, see toCanvas
+        var perpX = -dy, perpY = dx; // perpendicular, for the arrow's back corners
+        var len = 10, wid = 7;
+        var tipX = pc[0] + dx * len * 0.7, tipY = pc[1] + dy * len * 0.7;
+        var backX = pc[0] - dx * len * 0.3, backY = pc[1] - dy * len * 0.3;
+        mapCtx.fillStyle = "#ffffff";
+        mapCtx.beginPath();
+        mapCtx.moveTo(tipX, tipY);
+        mapCtx.lineTo(backX + perpX * wid * 0.5, backY + perpY * wid * 0.5);
+        mapCtx.lineTo(backX - perpX * wid * 0.5, backY - perpY * wid * 0.5);
+        mapCtx.closePath();
+        mapCtx.fill();
+      } catch (e) { /* engine not ready yet -- try again next tick */ }
+    }
+    // Matches this project's other map-ish polls (pollCurrentLevel above)
+    // -- a fog-of-war map doesn't need sub-second freshness, and re-
+    // walking a few hundred lines plus a full redraw every tick would be
+    // wasted work no one's watching closely enough to need.
+    setInterval(drawMap, 1500);
 
     // ---- Toast ----
     var toastTimer = null;
