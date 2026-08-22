@@ -322,6 +322,16 @@
       font-size: 13px;
       background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
     }
+    .touch-btn-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .touch-btn-weapon {
+      font-size: 12px;
+      background: radial-gradient(circle at 35% 28%, #b89a5a, #6b5530 60%, #2e2410 100%);
+    }
     /* Back -- the one menu button that survives tap-to-select (see the
        canvas pointerup handler and the HTML comment above tc-menu-group):
        there's no "tap to go back" gesture, and it's also the universal
@@ -596,7 +606,18 @@
               <span class="touch-joystick-label">Move</span>
             </div>
             <div class="touch-group touch-group-right" id="tc-play-group">
-              <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
+              <div class="touch-btn-stack">
+                <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
+                <!-- Cycles to the next *owned* weapon (assist_switch_weapon,
+                     g_game.c -- same G_NextWeapon cycling a real next-weapon
+                     press uses, wraps around). Not held-to-cycle: each tap
+                     is one discrete step, like tapping a real key would be.
+                     There's no separate previous-weapon button -- cycling
+                     forward repeatedly reaches every weapon eventually, and
+                     a single button was simpler than two for how rarely
+                     this needs pressing. -->
+                <button class="touch-btn touch-btn-small touch-btn-weapon" id="tc-weapon" aria-label="Next weapon">WPN</button>
+              </div>
               <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
                 <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
                 <span class="touch-joystick-label">Turn / Fire</span>
@@ -1474,6 +1495,18 @@
     setInterval(pollTouchMenuMode, 500);
 
     document.getElementById("tc-menu-back").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("Escape"); });
+
+    // Next-weapon: a direct C export (assist_switch_weapon, g_game.c),
+    // not a synthesized keypress like the cheat buttons -- next/prev
+    // weapon default to *no key at all* in this codebase (key_nextweapon/
+    // key_prevweapon both start at 0, m_controls.c; it's mouse-wheel-only
+    // out of the box), so there's no real key to fake a press of. One
+    // discrete step per tap, same as tapping a real bound key would be.
+    document.getElementById("tc-weapon").addEventListener("pointerdown", function (e) {
+      e.preventDefault();
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_switch_weapon", null, ["number"], [1]); } catch (err) {}
+    });
 
     // Auto-pause whenever a "See the code" link is opened, so the game
     // isn't running unattended while you're reading source in the new tab.

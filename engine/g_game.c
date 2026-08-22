@@ -67,6 +67,7 @@
 // passed by pointer instead of reusing mousex/mousey the way an earlier,
 // single-stick version of this feature did.
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 void assist_apply_touch_controls(int *forward, int *side, short *angleturn); // assist.c
 #endif
 
@@ -183,6 +184,27 @@ static int *weapon_keys[] = {
 // Set to -1 or +1 to switch to the previous or next weapon.
 
 static int next_weapon = 0;
+
+// --- doom-assist patch: touch weapon switching ---
+// next_weapon is what key_nextweapon/key_prevweapon actually set on a
+// real keydown (see the ev->data1 == key_nextweapon check further down
+// this file) -- G_BuildTiccmd picks it up next tic and calls
+// G_NextWeapon (below), which cycles to the next/previous weapon the
+// player actually *owns*, wrapping around, so there's nothing this needs
+// to know about which weapons exist or are currently held. It's `static`
+// (this file only), unlike the plain keys touch cheats/menu taps dispatch
+// as synthetic keyboard events elsewhere in this project, because
+// key_nextweapon/key_prevweapon both default to *no key at all* (0,
+// m_controls.c) -- next/prev weapon is mouse-wheel-only out of the box in
+// this codebase, so there's no real key to synthesize a press of in the
+// first place. Setting the same variable a real keypress would have
+// skips needing one.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE void assist_switch_weapon(int direction)
+{
+    next_weapon = direction < 0 ? -1 : 1;
+}
+#endif
 
 // Used for prev/next weapon keys.
 
