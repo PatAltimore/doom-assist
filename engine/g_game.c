@@ -58,14 +58,16 @@
 
 #include "p_local.h"
 
-// --- doom-assist patch: touch joystick ---
-// The browser build (see assist.c) supports a virtual analog
-// joystick for touchscreens by feeding it through mousex/mousey below,
-// the same globals real relative mouse motion would use. See
-// assist_apply_joystick's own comment in assist.c for why mousex/mousey
-// specifically, and how its scale factors were chosen.
+// --- doom-assist patch: twin-stick touch controls ---
+// The browser build (see assist.c) supports a twin-stick touch control
+// scheme: a left stick for strafe/forward and a right stick for turning
+// (firing is handled separately, by simulating the real Fire key -- see
+// web/shell.html). See assist_apply_touch_controls's own comment in
+// assist.c for the scale factors and why forward/side/angleturn are
+// passed by pointer instead of reusing mousex/mousey the way an earlier,
+// single-stick version of this feature did.
 #ifdef __EMSCRIPTEN__
-void assist_apply_joystick(void); // assist.c
+void assist_apply_touch_controls(int *forward, int *side, short *angleturn); // assist.c
 #endif
 
 #include "s_sound.h"
@@ -341,13 +343,6 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
 
     memset(cmd, 0, sizeof(ticcmd_t));
 
-#ifdef __EMSCRIPTEN__
-    // Must run before mousex/mousey are read below (and long before this
-    // function zeroes them back out at the end) so a touch-joystick push
-    // shows up in this tic's movement exactly like real mouse motion would.
-    assist_apply_joystick();
-#endif
-
     cmd->consistancy = 
 	consistancy[consoleplayer][maketic%BACKUPTICS]; 
  
@@ -565,9 +560,22 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
         testcontrols_mousespeed = 0;
     }
     
-    mousex = mousey = 0; 
-	 
-    if (forward > MAXPLMOVE) 
+    mousex = mousey = 0;
+
+#ifdef __EMSCRIPTEN__
+    // Touch controls (the twin-stick scheme in web/shell.html): the left
+    // stick's strafe/forward and the right stick's turn are added
+    // straight into these locals -- unlike the old single-stick version
+    // of this feature, they don't need to pretend to be mouse motion,
+    // since forward/side/angleturn are all still live local variables
+    // here rather than the already-finalized cmd->forwardmove/sidemove
+    // fields. Runs after every other input source has had its say, and
+    // before the shared clamp below, so touch input is clamped exactly
+    // like keyboard/mouse/joystick input already is.
+    assist_apply_touch_controls(&forward, &side, &cmd->angleturn);
+#endif
+
+    if (forward > MAXPLMOVE)
 	forward = MAXPLMOVE; 
     else if (forward < -MAXPLMOVE) 
 	forward = -MAXPLMOVE; 

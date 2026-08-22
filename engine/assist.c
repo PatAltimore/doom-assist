@@ -144,52 +144,67 @@ EMSCRIPTEN_KEEPALIVE int assist_resume(void)
 }
 
 // -----------------------------------------------------------------------
-// Touch joystick
+// Twin-stick touch controls
 // -----------------------------------------------------------------------
-// G_BuildTiccmd (g_game.c) reads two globals, mousex/mousey, and turns
-// them into proportional turning/forward movement each tic: a small value
-// turns/moves a little, a large one turns/moves a lot -- unlike the
-// keyboard's on/off digital movement, where "held" always means full
-// speed. Those globals are meant for real relative mouse motion, but
-// nothing in this Emscripten build currently feeds them (the browser
-// shell only forwards keyboard events, not mouse movement -- see
-// doomgeneric_emscripten.c) -- so they're a free, already-analog input
-// path this file can reuse for the touch joystick instead of teaching
-// G_BuildTiccmd a second, parallel movement scheme.
+// Two independent sticks (web/shell.html): a left one for movement
+// (forward/back and strafe left/right) and a right one for turning.
+// Firing isn't handled here at all -- the right stick's touch handler
+// just dispatches the real Fire key (Control) on pointerdown/pointerup,
+// the same synthetic-keyboard trick every cheat button already uses, so
+// a tap fires once and holding it fires continuously, exactly like a
+// real held key would for an automatic weapon.
 //
-// assist_apply_joystick() (called once per tic from a one-line patch in
-// G_BuildTiccmd, right before it reads mousex/mousey) converts the
-// joystick's -100..100 deflection into that same range mousex/mousey
-// normally carry. The scale factors below aren't arbitrary: they're
-// picked so a *full* push turns/moves at the same rate as holding down
-// the run-turn/run-forward keys (angleturn[1]==1280, MAXPLMOVE==
-// forwardmove[1]==50 -- see their definitions in g_game.c), so "full
+// An earlier, single-stick version of this feature reused mousex/mousey
+// (meant for real relative mouse motion, unused elsewhere in this
+// Emscripten build) as a shortcut -- but mousex's meaning in
+// G_BuildTiccmd flips between "turn" and "strafe" depending on whether
+// the strafe key happens to be held, which only works for a single
+// combined stick. A twin-stick scheme needs strafe and turn to be two
+// independently-addressable axes at all times, so this version instead
+// adds straight into forward/side/angleturn -- three pointers
+// G_BuildTiccmd (g_game.c) passes in from its own local variables, right
+// after every other input source (keyboard, real mouse, joystick) has
+// already had its say and right before they're all clamped together.
+//
+// The scale factors below aren't arbitrary: they're picked so a *full*
+// push moves/strafes/turns at the same rate as holding down the
+// run-speed keyboard equivalent (forwardmove[1]==50, sidemove[1]==40,
+// angleturn[1]==1280 -- see their definitions in g_game.c), so "full
 // stick" feels like "holding the fastest keyboard input", and anything
 // less than full deflection feels proportionally slower, like a real
 // analog stick.
-static int assist_joy_dx = 0, assist_joy_dy = 0; // -100..100, from web/shell.html
+static int assist_move_dx = 0, assist_move_dy = 0; // -100..100, left stick
+static int assist_turn_dx = 0;                     // -100..100, right stick
 
-EMSCRIPTEN_KEEPALIVE void assist_set_joystick(int dx, int dy)
+EMSCRIPTEN_KEEPALIVE void assist_set_move(int dx, int dy)
 {
-    assist_joy_dx = dx;
-    assist_joy_dy = dy;
+    assist_move_dx = dx;
+    assist_move_dy = dy;
+}
+
+EMSCRIPTEN_KEEPALIVE void assist_set_turn(int dx)
+{
+    assist_turn_dx = dx;
 }
 
 // Not EMSCRIPTEN_KEEPALIVE: this isn't called from JS, only from the
-// engine's own control-polling code (see the forward declaration and call
-// site added to G_BuildTiccmd in g_game.c).
-void assist_apply_joystick(void)
+// engine's own control-building code (see the forward declaration and
+// call site added to G_BuildTiccmd in g_game.c).
+void assist_apply_touch_controls(int *forward, int *side, short *angleturn)
 {
-    extern int mousex, mousey; // g_game.c (file-scope globals, not static)
-    if (assist_joy_dx)
-        mousex += assist_joy_dx * 8 / 5;  // +-100 -> +-160; G_BuildTiccmd applies *0x8, giving +-1280 == angleturn[1]
-    if (assist_joy_dy)
-        // dy is screen-space (web/shell.html's pointer delta): pushing the
-        // stick UP is a *negative* dy (up the screen), but forward motion
-        // needs a *positive* contribution to G_BuildTiccmd's `forward`.
-        // Negate here so "up" reliably means "forward", not the other way
-        // around -- confirmed backwards without this negation.
-        mousey -= assist_joy_dy / 2;      // +-100 -> +-50 == MAXPLMOVE, G_BuildTiccmd adds this to forward directly
+    if (assist_move_dy)
+        // dy is screen-space (web/shell.html's pointer delta): pushing
+        // the stick UP is a *negative* dy (up the screen), but forward
+        // motion needs a *positive* contribution here -- confirmed
+        // backwards without this negation.
+        *forward -= assist_move_dy * 50 / 100;  // +-100 -> +-50 == forwardmove[1]
+    if (assist_move_dx)
+        *side += assist_move_dx * 40 / 100;     // +-100 -> +-40 == sidemove[1]
+    if (assist_turn_dx)
+        // Matches the sign of the keyboard/mouse turn code just above
+        // this function's call site: pushing right (positive dx) turns
+        // right, which *decreases* angleturn.
+        *angleturn -= (short)(assist_turn_dx * 1280 / 100); // +-100 -> +-1280 == angleturn[1]
 }
 
 // -----------------------------------------------------------------------

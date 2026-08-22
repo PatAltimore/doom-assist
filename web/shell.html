@@ -103,11 +103,11 @@
     .resume-banner-actions .assist-btn { font-size: 15px; padding: 6px 14px; flex: 0 0 auto; }
     /* Game controls strip: below the canvas (not overlaid on top of it --
        an overlay partially obscures the 3D view, a strip underneath
-       doesn't). Pause always shows; the joystick/fire/use row only shows
-       on actual touchscreens (real mice/trackpads already have keyboard
-       access), sending the same inputs as the physical controls: the
-       joystick drives mousex/mousey directly like a real mouse would
-       (see assist_apply_joystick in assist.c), Ctrl fires, Space uses. */
+       doesn't). Pause always shows; the twin-stick/use row only shows on
+       actual touchscreens (real mice/trackpads already have keyboard
+       access): the left stick drives forward/strafe and the right stick
+       turns and fires (see assist_set_move/assist_set_turn in assist.c
+       and setupStick below), Space uses. */
     .game-controls {
       width: 100%;
       max-width: 1100px;
@@ -166,6 +166,19 @@
       box-shadow: 0 5px 8px rgba(0, 0, 0, 0.55), inset 0 -3px 5px rgba(0, 0, 0, 0.18);
       pointer-events: none;
     }
+    /* Right (look/fire) stick: smaller than the move stick since it
+       shares a row with USE rather than anchoring the whole control bar,
+       and its knob is tinted red -- the same red the old dedicated FIRE
+       button used -- as a visual reminder that touching it fires. */
+    .touch-joystick-look {
+      width: 110px;
+      height: 110px;
+    }
+    .touch-joystick-knob-look {
+      width: 50px;
+      height: 50px;
+      background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
+    }
     .touch-btn {
       width: 72px;
       height: 72px;
@@ -196,11 +209,6 @@
         0 1px 0 var(--bevel-dark),
         0 2px 4px rgba(0, 0, 0, 0.4),
         inset 0 2px 3px rgba(255, 255, 255, 0.15);
-    }
-    .touch-btn-fire {
-      width: 86px;
-      height: 86px;
-      font-size: 16px;
     }
     .touch-btn-use {
       font-size: 13px;
@@ -433,12 +441,21 @@
 
       <div class="game-controls" id="game-controls">
         <div class="touch-controls">
-          <div class="touch-joystick" id="tc-joystick" aria-label="Move / turn">
-            <div class="touch-joystick-knob" id="tc-joystick-knob"></div>
+          <!-- Twin-stick: left stick moves (forward/back + strafe left/
+               right), right stick turns and doubles as Fire -- touching
+               it down dispatches the real Fire key and keeps it held for
+               as long as your finger is, so a tap is a single shot and
+               holding it fires continuously, same as a real key would.
+               There's no separate Fire button because of this -- see
+               setupLookStick below. -->
+          <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
+            <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
           </div>
           <div class="touch-group touch-group-right" id="tc-play-group">
             <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
-            <button class="touch-btn touch-btn-fire" id="tc-fire" aria-label="Fire">FIRE</button>
+            <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+              <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+            </div>
           </div>
           <!-- Shown instead of Use/Fire whenever a menu might be on screen
                (title/demo, pause menu, skill/episode pick, ...) -- see
@@ -1083,28 +1100,19 @@
       el.addEventListener("pointercancel", release);
       el.addEventListener("pointerleave", release);
     }
-    bindHoldButton(document.getElementById("tc-fire"), "Control");
     bindHoldButton(document.getElementById("tc-use"), "Space");
 
-    // Virtual analog joystick for move/turn. Rather than simulating arrow
-    // keys (all-or-nothing -- the engine treats a held key as full speed
-    // the instant you cross a threshold), this feeds a proportional
-    // -100..100 value straight into assist_set_joystick (assist.c), which
-    // adds it into mousex/mousey every tic exactly like real relative
-    // mouse motion would -- so a light push moves slowly and a full push
-    // moves at full speed, like an actual stick.
-    (function setupJoystick() {
-      var base = document.getElementById("tc-joystick");
-      var knob = document.getElementById("tc-joystick-knob");
-      var maxDist = 55;
-      var deadzone = 8;
+    // Shared drag-tracking behind both touch sticks below: pointer capture,
+    // deadzone/clamp math, and knob positioning are identical between them
+    // -- they only differ in how far the knob can travel and what happens
+    // with the resulting -100..100 deflection. `onMove(dx, dy)` fires
+    // continuously while dragging (dx/dy already clamped to +-100);
+    // `onStart`/`onEnd` fire once each, on pointerdown/pointerup, before
+    // the first onMove(0,0)-equivalent reset.
+    function setupStick(baseId, knobId, maxDist, deadzone, onMove, onStart, onEnd) {
+      var base = document.getElementById(baseId);
+      var knob = document.getElementById(knobId);
       var pointerId = null;
-
-      function setJoystick(dx, dy) {
-        if (typeof Module === "undefined" || !Module.ccall) return;
-        try { Module.ccall("assist_set_joystick", null, ["number", "number"], [dx, dy]); }
-        catch (e) { /* engine not ready yet */ }
-      }
 
       function update(clientX, clientY) {
         var rect = base.getBoundingClientRect();
@@ -1116,20 +1124,20 @@
         var kx = Math.cos(angle) * clamped, ky = Math.sin(angle) * clamped;
         knob.style.transform = "translate(calc(-50% + " + kx + "px), calc(-50% + " + ky + "px))";
 
-        if (dist < deadzone) { setJoystick(0, 0); return; }
+        if (dist < deadzone) { onMove(0, 0); return; }
         var pct = clamped / maxDist; // 0..1, proportional to push distance
-        setJoystick(Math.round((kx / clamped) * pct * 100), Math.round((ky / clamped) * pct * 100));
+        onMove(Math.round((kx / clamped) * pct * 100), Math.round((ky / clamped) * pct * 100));
       }
 
       function reset() {
         knob.style.transform = "translate(-50%, -50%)";
-        setJoystick(0, 0);
+        onMove(0, 0);
       }
 
       base.addEventListener("pointerdown", function (e) {
         e.preventDefault();
         pointerId = e.pointerId;
-        // Without this, dragging past the joystick's own edges hands the
+        // Without this, dragging past the stick's own edges hands the
         // gesture to whatever element is physically under the finger next,
         // which lacks touch-action:none -- the browser then tries its
         // native overscroll/bounce gesture there, which is the "error
@@ -1137,6 +1145,7 @@
         // element regardless of where the finger wanders.
         try { base.setPointerCapture(e.pointerId); } catch (err) {}
         document.getElementById("canvas").focus();
+        if (onStart) onStart();
         update(e.clientX, e.clientY);
       });
       window.addEventListener("pointermove", function (e) {
@@ -1147,10 +1156,41 @@
         if (e.pointerId !== pointerId) return;
         pointerId = null;
         reset();
+        if (onEnd) onEnd();
       }
       window.addEventListener("pointerup", endDrag);
       window.addEventListener("pointercancel", endDrag);
-    })();
+    }
+
+    // Left stick: move + strafe. Rather than simulating arrow keys
+    // (all-or-nothing -- the engine treats a held key as full speed the
+    // instant you cross a threshold), this feeds a proportional -100..100
+    // value straight into assist_set_move (assist.c), which adds it into
+    // forward/side every tic -- so a light push moves slowly and a full
+    // push moves at full speed, like an actual stick.
+    setupStick("tc-move-joystick", "tc-move-joystick-knob", 55, 8, function (dx, dy) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_set_move", null, ["number", "number"], [dx, dy]); }
+      catch (e) { /* engine not ready yet */ }
+    });
+
+    // Right stick: turn, and doubles as Fire. Only the horizontal
+    // deflection (dx) does anything -- DOOM has no vertical look/pitch,
+    // so vertical drag is visual only (the knob still follows it, since a
+    // stick that only moves sideways would feel broken to actually hold).
+    // Touching the stick down dispatches the real Fire key and keeps it
+    // held until you let go, exactly like the old dedicated FIRE button
+    // did, so a quick tap is a single shot and holding it (while dragging
+    // to aim) fires continuously for automatic weapons.
+    setupStick("tc-look-joystick", "tc-look-joystick-knob", 38, 6, function (dx) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_set_turn", null, ["number"], [dx]); }
+      catch (e) { /* engine not ready yet */ }
+    }, function onStart() {
+      dispatchKey("keydown", "ControlLeft", "Control", 17);
+    }, function onEnd() {
+      dispatchKey("keyup", "ControlLeft", "Control", 17);
+    });
 
     // ---- Emscripten module wiring ----
     var statusElement = document.getElementById("status");
