@@ -1200,26 +1200,45 @@
     // tap, not a hold-to-turn. Confirmed unwanted: firing for the entire
     // duration a hold is down (the original design, matching the old
     // dedicated FIRE button's hold-to-fire behavior) burns ammo just from
-    // turning, since turning *is* holding the stick down. So instead of
-    // dispatching Fire on pointerdown, this tracks whether the stick was
-    // actually dragged past its deadzone at any point during the touch
-    // (lookDragged, set from the same dx onMove already gets for turning)
-    // and only fires -- once, via the shared tap() helper below -- on
-    // release, and only if that flag never got set. A tap that never
-    // exceeds the deadzone still fires normally; a hold that ever crosses
-    // it, however briefly, fires nothing at all for the rest of that
-    // touch.
-    (function setupLookStick() {
-      var lookDragged = false;
-      setupStick("tc-look-joystick", "tc-look-joystick-knob", 38, 6, function (dx) {
-        if (dx) lookDragged = true;
-        if (typeof Module === "undefined" || !Module.ccall) return;
-        try { Module.ccall("assist_set_turn", null, ["number"], [dx]); }
-        catch (e) { /* engine not ready yet */ }
-      }, function onStart() {
-        lookDragged = false;
-      }, function onEnd() {
-        if (!lookDragged) tap("Control");
+    // turning, since turning *is* holding the stick down.
+    setupStick("tc-look-joystick", "tc-look-joystick-knob", 38, 6, function (dx) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_set_turn", null, ["number"], [dx]); }
+      catch (e) { /* engine not ready yet */ }
+    });
+
+    // Tap-to-fire, tracked independently of setupStick's own drag/deflection
+    // handling above -- a first attempt tried to reuse that deflection
+    // value (distance from the *stick's center*) to tell a tap from a
+    // drag, but that's wrong: unless your finger lands on the exact
+    // center pixel, which is normal to not do, it's already several
+    // pixels from center on the very first frame, before any real
+    // movement, so most taps were wrongly read as drags and never fired
+    // -- worse the closer to the edge you tapped, which is what made it
+    // feel location-dependent. This instead tracks distance from wherever
+    // *this touch itself* started, completely independent of the stick's
+    // center or visuals, so a tap fires reliably no matter where on the
+    // stick it lands.
+    (function setupLookStickTap() {
+      var el = document.getElementById("tc-look-joystick");
+      var TAP_MOVE_THRESHOLD = 16; // px moved from this touch's own start before it counts as a drag, not a tap
+      var pointerId = null, startX = 0, startY = 0, dragged = false;
+
+      el.addEventListener("pointerdown", function (e) {
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        dragged = false;
+      });
+      window.addEventListener("pointermove", function (e) {
+        if (e.pointerId !== pointerId) return;
+        var dx = e.clientX - startX, dy = e.clientY - startY;
+        if (Math.sqrt(dx * dx + dy * dy) > TAP_MOVE_THRESHOLD) dragged = true;
+      });
+      window.addEventListener("pointerup", function (e) {
+        if (e.pointerId !== pointerId) return;
+        pointerId = null;
+        if (!dragged) tap("Control");
       });
     })();
 
