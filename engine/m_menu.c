@@ -58,6 +58,9 @@
 
 #include "m_menu.h"
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 extern patch_t*		hu_font[HU_FONTSIZE];
 extern boolean		message_dontfuckwithme;
@@ -2044,6 +2047,49 @@ void M_ClearMenus (void)
     // if (!netgame && usergame && paused)
     //       sendpause = true;
 }
+
+// --- doom-assist patch: tap-to-select menu items ---
+// currentMenu, itemOn, and menu_t itself are all local to this file (see
+// their declarations above and menu_t's typedef further up) -- there's
+// no menu.h that exposes any of them, and reaching in from web/shell.html
+// (via assist.c) would mean either re-declaring menu_t's exact layout
+// somewhere else (fragile: silently wrong the moment this file's struct
+// changes) or something worse. Small wrapper functions live right here
+// instead, next to the real types, and export only what a tap actually
+// needs: how many items the *current* menu has (0 if there isn't a real
+// itemized one on screen right now -- see the messageToPrint check,
+// which is a whole separate Y/N-prompt code path in M_Responder that
+// doesn't go through currentMenu/itemOn at all), where it starts
+// (currentMenu->y; each item is exactly LINEHEIGHT below the last, see
+// M_Drawer above), and a way to move the skull cursor directly to
+// whichever item a tap's Y coordinate maps to -- web/shell.html does that
+// mapping, then sends a real Enter to confirm, so selecting a menu item
+// by tap ends up running through the exact same M_Responder/routine()
+// code path a keyboard selection would.
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE int assist_menu_item_count(void)
+{
+    if (!menuactive || messageToPrint)
+        return 0;
+    return currentMenu->numitems;
+}
+
+EMSCRIPTEN_KEEPALIVE int assist_menu_base_y(void)
+{
+    return (menuactive && currentMenu) ? currentMenu->y : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE void assist_menu_set_item(int index)
+{
+    if (!menuactive || messageToPrint || !currentMenu)
+        return;
+    if (index < 0)
+        index = 0;
+    if (index >= currentMenu->numitems)
+        index = currentMenu->numitems - 1;
+    itemOn = index;
+}
+#endif
 
 
 

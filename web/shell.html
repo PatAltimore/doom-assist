@@ -308,24 +308,16 @@
       font-size: 13px;
       background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
     }
-    /* Menu-navigation cluster (Up/Down/Select/Back) -- swapped in for
-       Use/Fire whenever a menu might be showing (see pollTouchMenuMode).
-       Smaller than the play-mode buttons: four of them need to fit where
-       two did, and menu taps don't need the same big hit target combat
-       inputs do. */
+    /* Back -- the one menu button that survives tap-to-select (see the
+       canvas pointerup handler and the HTML comment above tc-menu-group):
+       there's no "tap to go back" gesture, and it's also the universal
+       cancel for a Y/N prompt. Swapped in for Use/Fire whenever a menu
+       might be showing (see pollTouchMenuMode); smaller than the play-
+       mode buttons since it doesn't need as big a hit target. */
     .touch-btn-small {
       width: 52px;
       height: 52px;
       font-size: 20px;
-    }
-    .touch-dpad {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .touch-btn-select {
-      background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
-      font-size: 15px;
     }
     .touch-btn-back {
       font-size: 13px;
@@ -479,6 +471,9 @@
       border-radius: 50%;
       flex-shrink: 0;
     }
+    /* Doors on the map itself are squares, not dots (see drawMap) --
+       matched here so the legend actually looks like what's drawn. */
+    .map-legend-swatch-square { border-radius: 2px; }
     .map-legend-you {
       width: 0;
       height: 0;
@@ -594,16 +589,15 @@
           </div>
           <!-- Shown instead of Use/Fire whenever a menu might be on screen
                (title/demo, pause menu, skill/episode pick, ...) -- see
-               pollTouchMenuMode below. DOOM's menus are keyboard-driven
-               (up/down cursor + select/back), not tap-a-position-on-screen,
-               so this is the touch equivalent of those four keys rather
-               than a literal touch on the menu text. -->
+               pollTouchMenuMode below. Selecting an item is done by
+               tapping it directly on the game screen itself (see the
+               canvas pointerup handler below, and assist_menu_* in
+               m_menu.c) -- Back is the one thing tapping the menu can't
+               do (there's no "tap to go back" gesture), and it's also
+               the universal cancel/dismiss for a Y/N prompt (e.g. the
+               Quit confirmation), which isn't a tappable itemized menu
+               at all. -->
           <div class="touch-group touch-group-right" id="tc-menu-group" hidden>
-            <div class="touch-dpad">
-              <button class="touch-btn touch-btn-small" id="tc-menu-up" aria-label="Menu up">▲</button>
-              <button class="touch-btn touch-btn-small" id="tc-menu-down" aria-label="Menu down">▼</button>
-            </div>
-            <button class="touch-btn touch-btn-small touch-btn-select" id="tc-menu-select" aria-label="Select">OK</button>
             <button class="touch-btn touch-btn-small touch-btn-back" id="tc-menu-back" aria-label="Back">BACK</button>
           </div>
           <button id="switch-to-keyboard-btn" class="control-mode-switch" type="button">Switch to keyboard controls</button>
@@ -651,10 +645,13 @@
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3a6fe8"></span>Blue key</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8403a"></span>Red key</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8e13a"></span>Yellow key</div>
+          <div class="map-legend-item"><span class="map-legend-swatch map-legend-swatch-square" style="background:#3a6fe8"></span>Blue door</div>
+          <div class="map-legend-item"><span class="map-legend-swatch map-legend-swatch-square" style="background:#e8403a"></span>Red door</div>
+          <div class="map-legend-item"><span class="map-legend-swatch map-legend-swatch-square" style="background:#e8e13a"></span>Yellow door</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#b03ae8"></span>Teleporter</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c"></span>Exit</div>
         </div>
-        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, teleporters, and the exit are always marked, even in unexplored territory.</p>
+        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it.</p>
       </div>
 
       <div id="cheats-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-cheats" hidden>
@@ -1097,7 +1094,15 @@
     // tile grid the way wolf3d-assist's map is) into a dedicated canvas,
     // plus the secret/key/teleporter/exit markers the native automap
     // (Tab, in the Cheats tab) has no concept of at all.
-    var MAP_POI_COLORS = { 1: "#e8963a", 2: "#3a6fe8", 3: "#e8403a", 4: "#e8e13a", 5: "#b03ae8", 6: "#3ae85c" };
+    var MAP_POI_COLORS = {
+      1: "#e8963a", 2: "#3a6fe8", 3: "#e8403a", 4: "#e8e13a", 5: "#b03ae8", 6: "#3ae85c",
+      // Doors reuse their matching key's exact color (7/8/9 alongside
+      // 2/3/4 above) -- drawn as squares (see the poiIsDoor check below)
+      // rather than a different hue, so a door and the key that opens it
+      // read as a matched pair at a glance, not two unrelated markers
+      // that happen to share a color by coincidence.
+      7: "#3a6fe8", 8: "#e8403a", 9: "#e8e13a"
+    };
     var mapCanvas = document.getElementById("map-canvas");
     var mapCtx = mapCanvas.getContext("2d");
     var mapBounds = null; // {xmin,ymin,xmax,ymax}; null until fetched, and reset on every level change (pollCurrentLevel above)
@@ -1159,11 +1164,20 @@
         var poiPtr = Module.ccall("assist_get_poi_data", "number", [], []);
         var poiData = Module.HEAP32.subarray(poiPtr / 4, poiPtr / 4 + poiCount * 3);
         for (var j = 0; j < poiCount; j++) {
+          var poiType = poiData[j * 3 + 2];
           var pp = toCanvas(poiData[j * 3 + 0], poiData[j * 3 + 1]);
-          mapCtx.fillStyle = MAP_POI_COLORS[poiData[j * 3 + 2]] || "#ffffff";
-          mapCtx.beginPath();
-          mapCtx.arc(pp[0], pp[1], 5, 0, Math.PI * 2);
-          mapCtx.fill();
+          mapCtx.fillStyle = MAP_POI_COLORS[poiType] || "#ffffff";
+          // Doors (7/8/9, assist.c) are squares -- same color as the key
+          // that opens them (2/3/4), different shape, so a door and its
+          // key read as a matched pair instead of two same-colored dots
+          // that happen to coincide.
+          if (poiType >= 7 && poiType <= 9) {
+            mapCtx.fillRect(pp[0] - 5, pp[1] - 5, 10, 10);
+          } else {
+            mapCtx.beginPath();
+            mapCtx.arc(pp[0], pp[1], 5, 0, Math.PI * 2);
+            mapCtx.fill();
+          }
         }
 
         var px = Module.ccall("assist_get_player_x", "number", [], []);
@@ -1322,25 +1336,74 @@
       try { Module.ccall("assist_toggle_pause", null, [], []); } catch (e) {}
     }
 
-    // Tapping the game screen: toggles pause while actually playing, or
-    // advances the title/demo cycle and confirms menu items while a menu
-    // might be up (see knownInGameplay / pollTouchMenuMode below) -- the
-    // latter is what lets a touch-only player get past the attract-mode
-    // demo and into a game at all, since there's otherwise no keyboard to
-    // press Enter on. Scoped to touch input only: on desktop, a left
-    // click on the canvas already fires the weapon (BT_ATTACK from
-    // mousebfire in g_game.c), so treating clicks as pause/confirm there
-    // would make mouse play unusable. Touch has no such conflict since
-    // tapping the canvas isn't bound to any action in the touch control
-    // scheme.
+    // DOOM's internal software-rendered framebuffer is a fixed 320x200
+    // (see the "DOOM screen size" line I_InitGraphics logs to the
+    // console at startup) regardless of how large the canvas is actually
+    // displayed on screen -- so a tapped point has to be rescaled from
+    // real on-screen CSS pixels into that fixed 200-tall coordinate space
+    // before it means anything to assist_menu_base_y's Y value. This
+    // ratio-based approach (tap fraction of the canvas's rendered height,
+    // times 200) gives the right answer regardless of the CSS/device
+    // scaling in between, without this file needing to know or track it.
+    var DOOM_SCREENHEIGHT = 200;
+    // Every menu item is exactly this many DOOM-screen pixels below the
+    // last, starting at assist_menu_base_y() -- see LINEHEIGHT in
+    // m_menu.c (M_Drawer, right where it draws each item and the skull
+    // cursor); it's a real engine constant, not a guess, just not one
+    // that's worth adding a whole new assist.c export to expose since it
+    // never changes at runtime.
+    var DOOM_MENU_LINEHEIGHT = 16;
+
+    // Tapping the game screen does one of three different things,
+    // depending on what's actually showing there right now:
+    //   1. Actually playing (knownInGameplay) -> toggle pause, same as
+    //      before this feature existed.
+    //   2. A real itemized menu is up (Main Menu, Skill, Episode, Load/
+    //      Save, ...) -> figure out which item the tap's Y coordinate
+    //      falls on and select *that one specifically* (assist_menu_
+    //      set_item, m_menu.c), then confirm it with a real Enter --
+    //      this is what replaces the old dedicated Up/Down/Select
+    //      buttons with tapping the item you actually want directly, the
+    //      way wolf3d-assist's equivalent feature works.
+    //   3. Anything else (the attract-mode title/demo loop, or a Y/N
+    //      message box like the Quit confirmation, which isn't an
+    //      itemized menu at all -- see assist_menu_item_count's own
+    //      messageToPrint check) -> just send Enter, which is what
+    //      actually interrupts the demo and opens the menu in the first
+    //      place. This is the fix for "no way to start the game on
+    //      touch": previously knownInGameplay only checked gamestate/
+    //      menuactive, and the attract-mode demo is a completely real
+    //      GS_LEVEL (demos are just a level plus a prerecorded input
+    //      stream, see assist_get_demoplayback's comment in assist.c),
+    //      so it was wrongly treated as real play with no way to ever
+    //      reach the menu by touch at all.
+    //
+    // Scoped to touch input only: on desktop, a left click on the canvas
+    // already fires the weapon (BT_ATTACK from mousebfire in g_game.c),
+    // so treating clicks as pause/menu-select there would make mouse play
+    // unusable. Touch has no such conflict since tapping the canvas isn't
+    // bound to any action in the touch control scheme.
     document.getElementById("canvas").addEventListener("pointerup", function (e) {
       if (e.pointerType !== "touch") return;
       if (knownInGameplay) {
         sendTogglePause();
         toast(knownPaused ? "Resumed" : "Paused — tap the screen to resume");
-      } else {
-        tap("Enter");
+        return;
       }
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        var itemCount = Module.ccall("assist_menu_item_count", "number", [], []);
+        if (itemCount > 0) {
+          var rect = document.getElementById("canvas").getBoundingClientRect();
+          var gameY = ((e.clientY - rect.top) / rect.height) * DOOM_SCREENHEIGHT;
+          var baseY = Module.ccall("assist_menu_base_y", "number", [], []);
+          var index = Math.floor((gameY - baseY) / DOOM_MENU_LINEHEIGHT);
+          if (index < 0) index = 0;
+          if (index > itemCount - 1) index = itemCount - 1;
+          Module.ccall("assist_menu_set_item", null, ["number"], [index]);
+        }
+      } catch (err) { /* engine not ready yet */ }
+      tap("Enter");
     });
 
     function pollPaused() {
@@ -1354,17 +1417,25 @@
     // ---- Touch menu navigation ----
     // A menu (title/demo, pause, skill/episode pick, save/load, ...) can
     // be on screen at almost any point, and DOOM's menus are entirely
-    // keyboard-driven -- up/down to move the cursor, Enter to confirm,
-    // Escape to back out -- with no touch/tap-position equivalent built
-    // into the engine. Without *some* touch mapping for those four keys,
-    // a touch-only player can start the game (the title screen's attract
-    // demo just loops forever) or ever reach a menu item other than
-    // whatever the cursor defaults to. GS_LEVEL (0, doomdef.h) plus
-    // assist_get_menuactive() (assist.c) together distinguish "actually
-    // playing, no menu up" from every case where a menu might be drawn,
-    // including ones the pause/tap handler above doesn't cover (e.g. the
-    // attract-mode demo, which is GS_LEVEL but definitely not something
-    // Fire/Use should be pointed at).
+    // keyboard-driven with no touch/tap-position equivalent built into
+    // the engine -- so without *some* touch mapping, a touch-only player
+    // could never start the game at all (the title screen's attract-mode
+    // demo just loops forever) or reach any menu item other than whatever
+    // the cursor defaults to. That mapping is the canvas pointerup
+    // handler above (tap-to-select, plus Enter to open the menu from the
+    // demo in the first place); what's here just decides when to offer
+    // Fire/Use (tcPlayGroup) versus the small menu Back button
+    // (tcMenuGroup) instead.
+    //
+    // Three signals, not two: GS_LEVEL (0, doomdef.h) alone would call
+    // the attract-mode demo "real gameplay", since a demo *is* a genuine
+    // GS_LEVEL (just fed from a prerecorded input stream instead of a
+    // live player -- see assist_get_demoplayback's comment in assist.c),
+    // which would wrongly offer Fire/Use with no way to ever reach the
+    // menu by touch. assist_get_menuactive() (assist.c) is the other
+    // half: menuactive doesn't stop gameplay simulating behind an open
+    // menu, so it's a genuinely separate condition from either of the
+    // other two, not implied by them.
     var GS_LEVEL_FOR_TOUCH = 0;
     var knownInGameplay = true; // assume real play until first poll says otherwise
     var tcPlayGroup = document.getElementById("tc-play-group");
@@ -1375,16 +1446,14 @@
       try {
         var gs = Module.ccall("assist_get_gamestate", "number", [], []);
         var menuActive = Module.ccall("assist_get_menuactive", "number", [], []) === 1;
-        knownInGameplay = gs === GS_LEVEL_FOR_TOUCH && !menuActive;
+        var demoPlaying = Module.ccall("assist_get_demoplayback", "number", [], []) === 1;
+        knownInGameplay = gs === GS_LEVEL_FOR_TOUCH && !menuActive && !demoPlaying;
         tcPlayGroup.hidden = !knownInGameplay;
         tcMenuGroup.hidden = knownInGameplay;
       } catch (e) { /* engine not ready yet */ }
     }
     setInterval(pollTouchMenuMode, 500);
 
-    document.getElementById("tc-menu-up").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("ArrowUp"); });
-    document.getElementById("tc-menu-down").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("ArrowDown"); });
-    document.getElementById("tc-menu-select").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("Enter"); });
     document.getElementById("tc-menu-back").addEventListener("pointerdown", function (e) { e.preventDefault(); tap("Escape"); });
 
     // Auto-pause whenever a "See the code" link is opened, so the game

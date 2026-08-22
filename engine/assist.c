@@ -73,13 +73,27 @@ EMSCRIPTEN_KEEPALIVE int assist_is_paused(void) { return paused ? 1 : 0; }
 // pause, skill/episode select, save/load, ...) is drawn over whatever's
 // behind it" -- the two aren't the same thing (menuactive doesn't stop
 // gameplay simulating behind it, see m_menu.c). The touch controls use
-// this to swap Fire/Use for a small Up/Down/Select/Back cluster whenever
-// a menu might be showing, since there'd otherwise be no way to navigate
-// one by touch at all.
+// this to swap Fire/Use for tap-to-select menu navigation (see
+// assist_menu_* in m_menu.c) whenever a menu might be showing, since
+// there'd otherwise be no way to navigate one by touch at all.
 EMSCRIPTEN_KEEPALIVE int assist_get_menuactive(void)
 {
     extern boolean menuactive; // m_menu.c
     return menuactive ? 1 : 0;
+}
+
+// The attract-mode demo (played automatically whenever the game has sat
+// idle at the title screen) runs as a completely real GS_LEVEL -- demos
+// are just a level plus a prerecorded input stream instead of a live
+// player, so gamestate alone can't tell "actually playing" apart from
+// "watching the demo loop" the way assist_get_menuactive's own comment
+// already has to for menus. Without this, a touch player would have no
+// way to ever interrupt the demo and reach the menu at all: the touch UI
+// would treat the demo as real gameplay and offer Fire/Use instead of a
+// way to open the menu.
+EMSCRIPTEN_KEEPALIVE int assist_get_demoplayback(void)
+{
+    return demoplayback ? 1 : 0;
 }
 
 // wolf3d-assist's equivalent feature sends the engine's real Pause key
@@ -343,16 +357,28 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 // an already-found key just naturally stops appearing, with no separate
 // "found" tracking needed.
 //
-// Teleporters and the exit are both just specific line->special numbers,
-// confirmed directly against the case labels that actually call
-// EV_Teleport/G_ExitLevel/G_SecretExitLevel (p_spec.c, p_switch.c) rather
-// than assumed from memory. Marked at each line's midpoint.
+// Teleporters, the exit, and locked doors are all just specific
+// line->special numbers, confirmed directly against the case labels that
+// actually call EV_Teleport/G_ExitLevel/G_SecretExitLevel/EV_VerticalDoor/
+// EV_DoLockedDoor (p_spec.c, p_switch.c, p_doors.c) rather than assumed
+// from memory. Marked at each line's midpoint. A locked door's special
+// stays put (so it keeps showing) unless it's the D1 "opens once,
+// permanently" variant (32/33/34), which -- like a found secret --
+// clears itself back to a plain special the instant it's used
+// (EV_VerticalDoor, p_doors.c), so a door you've already opened for good
+// naturally stops needing the reminder; the DR "opens every time, if you
+// still have the key" variant (26/27/28) never clears and neither do the
+// remote/switch-triggered lock checks (99/133-137), so those stay marked
+// for the rest of the level.
 #define ASSIST_POI_SECRET     1
 #define ASSIST_POI_KEY_BLUE   2
 #define ASSIST_POI_KEY_RED    3
 #define ASSIST_POI_KEY_YELLOW 4
 #define ASSIST_POI_TELEPORT   5
 #define ASSIST_POI_EXIT       6
+#define ASSIST_POI_DOOR_BLUE   7
+#define ASSIST_POI_DOOR_RED    8
+#define ASSIST_POI_DOOR_YELLOW 9
 
 #define ASSIST_MAXPOI 64
 static int assist_poi_buf[ASSIST_MAXPOI * 3]; // per POI: x, y, type
@@ -423,6 +449,12 @@ static void assist_scan_pois(void)
             type = ASSIST_POI_TELEPORT;
         else if (special == 11 || special == 51 || special == 52 || special == 124)
             type = ASSIST_POI_EXIT;
+        else if (special == 26 || special == 32 || special == 99 || special == 133)
+            type = ASSIST_POI_DOOR_BLUE;
+        else if (special == 28 || special == 33 || special == 134 || special == 135)
+            type = ASSIST_POI_DOOR_RED;
+        else if (special == 27 || special == 34 || special == 136 || special == 137)
+            type = ASSIST_POI_DOOR_YELLOW;
         if (type)
             assist_poi_add((lines[i].v1->x + lines[i].v2->x) / 2 >> FRACBITS,
                             (lines[i].v1->y + lines[i].v2->y) / 2 >> FRACBITS,
