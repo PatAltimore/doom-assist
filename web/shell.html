@@ -98,7 +98,14 @@
       z-index: 10;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65);
     }
-    .resume-banner p { margin: 0 0 10px; color: var(--white); font-size: 17px; }
+    /* line-height is deliberate, not decorative: this text is long enough
+       to wrap to 2 lines at most viewport widths, and VT323's own default
+       line-height runs tight enough that the wrapped lines render on top
+       of each other without an explicit override -- confirmed against
+       .hint-box below, which sets line-height for the same reason and
+       never shows this, unlike every other multi-line text block in this
+       file that didn't. */
+    .resume-banner p { margin: 0 0 10px; color: var(--white); font-size: 17px; line-height: 1.4; }
     .resume-banner-actions { display: flex; gap: 10px; justify-content: center; }
     .resume-banner-actions .assist-btn { font-size: 15px; padding: 6px 14px; flex: 0 0 auto; }
     /* Game controls strip: below the canvas (not overlaid on top of it --
@@ -121,10 +128,17 @@
     }
     .touch-controls {
       display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
       width: 100%;
+      padding: 4px 16px 10px;
+    }
+    .touch-controls-row {
+      display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 4px 16px 10px;
+      width: 100%;
     }
     .key-legend {
       display: flex;
@@ -440,7 +454,7 @@
       font-family: inherit;
       font-size: 16px;
     }
-    .cheat-desc { font-size: 15px; color: var(--text-dim); margin: -4px 0 10px; }
+    .cheat-desc { font-size: 15px; color: var(--text-dim); margin: -4px 0 10px; line-height: 1.4; }
     .map-wrap {
       background: #000;
       border: 2px solid;
@@ -507,7 +521,7 @@
       margin-top: 4px;
     }
     .code-link:hover { background: var(--red-bright); }
-    .ack-note { font-size: 15px; color: var(--text-dim); margin-top: 16px; }
+    .ack-note { font-size: 15px; color: var(--text-dim); margin-top: 16px; line-height: 1.4; }
     .toast {
       position: fixed;
       bottom: 16px;
@@ -569,37 +583,42 @@
 
       <div class="game-controls" id="game-controls">
         <div class="touch-controls">
-          <!-- Twin-stick: left stick moves (forward/back + strafe left/
-               right), right stick turns and doubles as Fire -- touching
-               it down dispatches the real Fire key and keeps it held for
-               as long as your finger is, so a tap is a single shot and
-               holding it fires continuously, same as a real key would.
-               There's no separate Fire button because of this -- see
-               setupLookStick below. -->
-          <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
-            <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
-            <span class="touch-joystick-label">Move</span>
-          </div>
-          <div class="touch-group touch-group-right" id="tc-play-group">
-            <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
-            <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
-              <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
-              <span class="touch-joystick-label">Turn / Fire</span>
+          <div class="touch-controls-row">
+            <!-- Twin-stick: left stick moves (forward/back + strafe left/
+                 right), right stick turns and doubles as Fire -- touching
+                 it down dispatches the real Fire key and keeps it held for
+                 as long as your finger is, so a tap is a single shot and
+                 holding it fires continuously, same as a real key would.
+                 There's no separate Fire button because of this -- see
+                 setupLookStick below. -->
+            <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
+              <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
+              <span class="touch-joystick-label">Move</span>
+            </div>
+            <div class="touch-group touch-group-right" id="tc-play-group">
+              <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
+              <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+                <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+                <span class="touch-joystick-label">Turn / Fire</span>
+              </div>
+            </div>
+            <!-- Shown instead of Use/Fire whenever a menu might be on screen
+                 (title/demo, pause menu, skill/episode pick, ...) -- see
+                 pollTouchMenuMode below. Selecting an item is done by
+                 tapping it directly on the game screen itself (see the
+                 canvas pointerup handler below, and assist_menu_* in
+                 m_menu.c) -- Back is the one thing tapping the menu can't
+                 do (there's no "tap to go back" gesture), and it's also
+                 the universal cancel/dismiss for a Y/N prompt (e.g. the
+                 Quit confirmation), which isn't a tappable itemized menu
+                 at all. -->
+            <div class="touch-group touch-group-right" id="tc-menu-group" hidden>
+              <button class="touch-btn touch-btn-small touch-btn-back" id="tc-menu-back" aria-label="Back">BACK</button>
             </div>
           </div>
-          <!-- Shown instead of Use/Fire whenever a menu might be on screen
-               (title/demo, pause menu, skill/episode pick, ...) -- see
-               pollTouchMenuMode below. Selecting an item is done by
-               tapping it directly on the game screen itself (see the
-               canvas pointerup handler below, and assist_menu_* in
-               m_menu.c) -- Back is the one thing tapping the menu can't
-               do (there's no "tap to go back" gesture), and it's also
-               the universal cancel/dismiss for a Y/N prompt (e.g. the
-               Quit confirmation), which isn't a tappable itemized menu
-               at all. -->
-          <div class="touch-group touch-group-right" id="tc-menu-group" hidden>
-            <button class="touch-btn touch-btn-small touch-btn-back" id="tc-menu-back" aria-label="Back">BACK</button>
-          </div>
+          <!-- Its own row below the joystick/buttons, not squeezed in
+               alongside them -- crowded the layout when it lived in the
+               same flex row as the sticks and USE/Back. -->
           <button id="switch-to-keyboard-btn" class="control-mode-switch" type="button">Switch to keyboard controls</button>
         </div>
         <!-- Shown on non-touch devices by default (see the auto-detect
