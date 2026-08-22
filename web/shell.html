@@ -179,6 +179,26 @@
       height: 50px;
       background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
     }
+    /* Sits below the stick rather than on it -- the knob already fills
+       most of the circle, so text on top of it would mostly be covered
+       by the knob itself except at full deflection. Absolutely
+       positioned relative to .touch-joystick (position: relative), so it
+       doesn't affect the row's flex height -- .game-controls has no
+       overflow:hidden between here and the page edge, so it just renders
+       past the stick's own circle underneath it. */
+    .touch-joystick-label {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 6px;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      white-space: nowrap;
+      pointer-events: none;
+    }
     .touch-btn {
       width: 72px;
       height: 72px;
@@ -450,11 +470,13 @@
                setupLookStick below. -->
           <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
             <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
+            <span class="touch-joystick-label">Move</span>
           </div>
           <div class="touch-group touch-group-right" id="tc-play-group">
             <button class="touch-btn touch-btn-use" id="tc-use" aria-label="Open / use">USE</button>
             <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
               <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+              <span class="touch-joystick-label">Turn / Fire</span>
             </div>
           </div>
           <!-- Shown instead of Use/Fire whenever a menu might be on screen
