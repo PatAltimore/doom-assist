@@ -184,19 +184,22 @@ EMSCRIPTEN_KEEPALIVE int assist_resume(void)
 // after every other input source (keyboard, real mouse, joystick) has
 // already had its say and right before they're all clamped together.
 //
-// The move/strafe scale factors aren't arbitrary: they're picked so a
-// *full* push moves/strafes at the same rate as holding down the
-// run-speed keyboard equivalent (forwardmove[1]==50, sidemove[1]==40 --
-// see their definitions in g_game.c), so "full stick" feels like
-// "holding the fastest keyboard input", and anything less than full
-// deflection feels proportionally slower, like a real analog stick.
+// The forward/back scale factor isn't arbitrary: it's picked so a *full*
+// push moves at the same rate as holding down the run-speed keyboard
+// equivalent (forwardmove[1]==50 -- see its definition in g_game.c), so
+// "full stick" feels like "holding the fastest keyboard input", and
+// anything less than full deflection feels proportionally slower, like
+// a real analog stick.
 //
-// Turn is scaled down further, to 60% of its keyboard-equivalent
-// (angleturn[1]==1280 -> 768): at the full 1280 rate, the short throw of
-// a touch stick made a full push feel twitchy/oversensitive -- small,
-// easy-to-overshoot finger movements swung the view too far. 768 keeps
-// "full stick" as the fastest turn speed available, just reached with a
-// gentler slope.
+// Strafe and turn are both scaled down further, to 60% of their
+// keyboard-equivalents (sidemove[1]==40 -> 24, angleturn[1]==1280 ->
+// 768): at the full rate, the short throw of a touch stick made a full
+// push feel twitchy/oversensitive on those two axes -- small, easy-to-
+// overshoot finger movements swung the view or slid the player sideways
+// too far. 60% keeps "full stick" as the fastest speed available on
+// each axis, just reached with a gentler slope. Forward/back doesn't
+// get the same treatment: overshooting straight-line movement isn't the
+// same kind of disorienting as overshooting a turn or a sideways slide.
 static int assist_move_dx = 0, assist_move_dy = 0; // -100..100, left stick
 static int assist_turn_dx = 0;                     // -100..100, right stick
 
@@ -223,7 +226,7 @@ void assist_apply_touch_controls(int *forward, int *side, short *angleturn)
         // backwards without this negation.
         *forward -= assist_move_dy * 50 / 100;  // +-100 -> +-50 == forwardmove[1]
     if (assist_move_dx)
-        *side += assist_move_dx * 40 / 100;     // +-100 -> +-40 == sidemove[1]
+        *side += assist_move_dx * 24 / 100;     // +-100 -> +-24 == 60% of sidemove[1]
     if (assist_turn_dx)
         // Matches the sign of the keyboard/mouse turn code just above
         // this function's call site: pushing right (positive dx) turns
