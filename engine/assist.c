@@ -184,13 +184,19 @@ EMSCRIPTEN_KEEPALIVE int assist_resume(void)
 // after every other input source (keyboard, real mouse, joystick) has
 // already had its say and right before they're all clamped together.
 //
-// The scale factors below aren't arbitrary: they're picked so a *full*
-// push moves/strafes/turns at the same rate as holding down the
-// run-speed keyboard equivalent (forwardmove[1]==50, sidemove[1]==40,
-// angleturn[1]==1280 -- see their definitions in g_game.c), so "full
-// stick" feels like "holding the fastest keyboard input", and anything
-// less than full deflection feels proportionally slower, like a real
-// analog stick.
+// The move/strafe scale factors aren't arbitrary: they're picked so a
+// *full* push moves/strafes at the same rate as holding down the
+// run-speed keyboard equivalent (forwardmove[1]==50, sidemove[1]==40 --
+// see their definitions in g_game.c), so "full stick" feels like
+// "holding the fastest keyboard input", and anything less than full
+// deflection feels proportionally slower, like a real analog stick.
+//
+// Turn is scaled down further, to 60% of its keyboard-equivalent
+// (angleturn[1]==1280 -> 768): at the full 1280 rate, the short throw of
+// a touch stick made a full push feel twitchy/oversensitive -- small,
+// easy-to-overshoot finger movements swung the view too far. 768 keeps
+// "full stick" as the fastest turn speed available, just reached with a
+// gentler slope.
 static int assist_move_dx = 0, assist_move_dy = 0; // -100..100, left stick
 static int assist_turn_dx = 0;                     // -100..100, right stick
 
@@ -222,7 +228,7 @@ void assist_apply_touch_controls(int *forward, int *side, short *angleturn)
         // Matches the sign of the keyboard/mouse turn code just above
         // this function's call site: pushing right (positive dx) turns
         // right, which *decreases* angleturn.
-        *angleturn -= (short)(assist_turn_dx * 1280 / 100); // +-100 -> +-1280 == angleturn[1]
+        *angleturn -= (short)(assist_turn_dx * 768 / 100); // +-100 -> +-768 == 60% of angleturn[1]
 }
 
 // -----------------------------------------------------------------------
