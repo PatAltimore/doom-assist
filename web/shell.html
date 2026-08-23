@@ -1422,7 +1422,17 @@
     //      this is what replaces the old dedicated Up/Down/Select
     //      buttons with tapping the item you actually want directly, the
     //      way wolf3d-assist's equivalent feature works.
-    //   3. Anything else (the attract-mode title/demo loop, or a Y/N
+    //   3. The end-of-level stats screen (GS_INTERMISSION, doomdef.h) ->
+    //      tap Fire (Control), not Enter. wi_stuff.c's WI_checkForAccelerate
+    //      polls the player's ticcmd BT_ATTACK/BT_USE buttons once a tic to
+    //      skip the tally and move to the next level -- it never goes
+    //      through the keyboard event responder chain at all (WI_Responder
+    //      is defined in wi_stuff.c but nothing ever calls it, a vanilla-
+    //      DOOM quirk that predates this project). Sending Enter here is a
+    //      no-op, which is why tapping the stats screen previously did
+    //      nothing. Control is the same real key setupLookStickTap already
+    //      dispatches for tap-to-fire during gameplay, reused here.
+    //   4. Anything else (the attract-mode title/demo loop, or a Y/N
     //      message box like the Quit confirmation, which isn't an
     //      itemized menu at all -- see assist_menu_item_count's own
     //      messageToPrint check) -> just send Enter, which is what
@@ -1440,6 +1450,7 @@
     // so treating clicks as pause/menu-select there would make mouse play
     // unusable. Touch has no such conflict since tapping the canvas isn't
     // bound to any action in the touch control scheme.
+    var GS_INTERMISSION = 1; // doomdef.h's gamestate_t: GS_LEVEL, GS_INTERMISSION, GS_FINALE, GS_DEMOSCREEN
     document.getElementById("canvas").addEventListener("pointerup", function (e) {
       if (e.pointerType !== "touch") return;
       if (knownInGameplay) {
@@ -1449,6 +1460,10 @@
       }
       if (typeof Module === "undefined" || !Module.ccall) return;
       try {
+        if (Module.ccall("assist_get_gamestate", "number", [], []) === GS_INTERMISSION) {
+          tap("Control");
+          return;
+        }
         var itemCount = Module.ccall("assist_menu_item_count", "number", [], []);
         if (itemCount > 0) {
           var rect = document.getElementById("canvas").getBoundingClientRect();
