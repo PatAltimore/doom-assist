@@ -690,6 +690,7 @@
           <div class="map-legend-item"><span class="map-legend-swatch map-legend-swatch-square" style="background:#e8e13a"></span>Yellow door</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#b03ae8"></span>Teleporter</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c"></span>Exit</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae8e8; border-radius:0; clip-path: polygon(50% 0%, 0% 100%, 100% 100%);"></span>Switch</div>
         </div>
         <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it.</p>
       </div>
@@ -1141,7 +1142,12 @@
       // rather than a different hue, so a door and the key that opens it
       // read as a matched pair at a glance, not two unrelated markers
       // that happen to share a color by coincidence.
-      7: "#3a6fe8", 8: "#e8403a", 9: "#e8e13a"
+      7: "#3a6fe8", 8: "#e8403a", 9: "#e8e13a",
+      // Switches get their own color (cyan) and their own shape (a
+      // triangle, see the poiType === 10 branch below) -- not reused
+      // from any key/door pair, since a switch doesn't correspond to a
+      // specific key the way a door does.
+      10: "#3ae8e8"
     };
     var mapCanvas = document.getElementById("map-canvas");
     var mapCtx = mapCanvas.getContext("2d");
@@ -1213,6 +1219,17 @@
           // that happen to coincide.
           if (poiType >= 7 && poiType <= 9) {
             mapCtx.fillRect(pp[0] - 5, pp[1] - 5, 10, 10);
+          } else if (poiType === 10) {
+            // Switch marker: an upward-pointing triangle, so it reads as
+            // distinct from both the door squares and the key/item dots
+            // at a glance -- a switch isn't a pickup and isn't a door,
+            // it's an action you take on the wall.
+            mapCtx.beginPath();
+            mapCtx.moveTo(pp[0], pp[1] - 6);
+            mapCtx.lineTo(pp[0] - 6, pp[1] + 5);
+            mapCtx.lineTo(pp[0] + 6, pp[1] + 5);
+            mapCtx.closePath();
+            mapCtx.fill();
           } else {
             mapCtx.beginPath();
             mapCtx.arc(pp[0], pp[1], 5, 0, Math.PI * 2);

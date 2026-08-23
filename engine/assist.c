@@ -379,10 +379,53 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 #define ASSIST_POI_DOOR_BLUE   7
 #define ASSIST_POI_DOOR_RED    8
 #define ASSIST_POI_DOOR_YELLOW 9
+#define ASSIST_POI_SWITCH      10
 
 #define ASSIST_MAXPOI 64
 static int assist_poi_buf[ASSIST_MAXPOI * 3]; // per POI: x, y, type
 static int assist_poi_count;
+
+// A line "is a switch" the same way a player recognizes one: it's
+// textured with one of the animated switch graphics (the ones that
+// visibly flip to their "pressed" look), not by its special number --
+// plenty of non-switch lines have specials too (walk-over teleporters,
+// for one). switchlist (p_switch.c) is the engine's own already-loaded
+// table of every valid switch texture *number* for this WAD's episode
+// (built once at startup by P_InitSwitchList, from P_Init -- long before
+// any level, let alone this scan, could ever run), so this just checks a
+// line's sidedef textures against it instead of re-deriving the list
+// from scratch. p_switch.c defines these as plain globals but never
+// declares them extern in a header (p_spec.h only has the switchlist_t
+// struct type), so we declare them ourselves here.
+extern int switchlist[];
+extern int numswitches;
+
+static int assist_texture_is_switch(int texnum)
+{
+    int i;
+    if (texnum <= 0)
+        return 0;
+    for (i = 0; i < numswitches * 2; i++)
+        if (switchlist[i] == texnum)
+            return 1;
+    return 0;
+}
+
+static int assist_line_has_switch(line_t *ld)
+{
+    int s;
+    for (s = 0; s < 2; s++)
+    {
+        int sidenum = ld->sidenum[s];
+        if (sidenum < 0 || sidenum >= numsides)
+            continue;
+        if (assist_texture_is_switch(sides[sidenum].toptexture) ||
+            assist_texture_is_switch(sides[sidenum].midtexture) ||
+            assist_texture_is_switch(sides[sidenum].bottomtexture))
+            return 1;
+    }
+    return 0;
+}
 
 static void assist_poi_add(int x, int y, int type)
 {
@@ -455,6 +498,15 @@ static void assist_scan_pois(void)
             type = ASSIST_POI_DOOR_RED;
         else if (special == 27 || special == 34 || special == 136 || special == 137)
             type = ASSIST_POI_DOOR_YELLOW;
+        else if (special != 0 && assist_line_has_switch(&lines[i]))
+            // Fallback, not a first check: a switch-textured line with one
+            // of the specific specials above (e.g. a keycard-locked door
+            // that also happens to use a switch graphic) already has a
+            // more useful marker; this only fires for the ones that
+            // don't, which in practice means ordinary unlock-a-secret /
+            // open-a-passage switches -- exactly the ones a player asking
+            // "where's the switch for this secret" wants pointed out.
+            type = ASSIST_POI_SWITCH;
         if (type)
             assist_poi_add((lines[i].v1->x + lines[i].v2->x) / 2 >> FRACBITS,
                             (lines[i].v1->y + lines[i].v2->y) / 2 >> FRACBITS,
