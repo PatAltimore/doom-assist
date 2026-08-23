@@ -1650,10 +1650,26 @@
     // duration a hold is down (the original design, matching the old
     // dedicated FIRE button's hold-to-fire behavior) burns ammo just from
     // turning, since turning *is* holding the stick down.
+    //
+    // lookStickDragged (set by setupLookStickTap below) is the same
+    // "has this touch moved past the tap threshold" flag that decides
+    // whether release fires -- reused here so a tap doesn't *also* turn.
+    // Without this, setupStick's update() computes turn from distance to
+    // the stick's *center* starting on the very first pointerdown frame,
+    // so unless a tap landed on the exact center pixel (never), a plain
+    // tap-to-fire was also nudging the view a few degrees.
+    var lookStickDragged = false;
     setupStick("tc-look-joystick", "tc-look-joystick-knob", 38, 6, function (dx) {
       if (typeof Module === "undefined" || !Module.ccall) return;
-      try { Module.ccall("assist_set_turn", null, ["number"], [dx]); }
+      try { Module.ccall("assist_set_turn", null, ["number"], [lookStickDragged ? dx : 0]); }
       catch (e) { /* engine not ready yet */ }
+    }, function onStart() {
+      // Runs before this pointerdown's first update()/onMove() above, so
+      // clearing the flag here (rather than in setupLookStickTap's own
+      // pointerdown handler below) guarantees a fresh touch never inherits
+      // "dragged" from the gesture before it, regardless of which of the
+      // two pointerdown listeners on this element happens to run first.
+      lookStickDragged = false;
     });
 
     // Tap-to-fire, tracked independently of setupStick's own drag/deflection
@@ -1671,23 +1687,23 @@
     (function setupLookStickTap() {
       var el = document.getElementById("tc-look-joystick");
       var TAP_MOVE_THRESHOLD = 16; // px moved from this touch's own start before it counts as a drag, not a tap
-      var pointerId = null, startX = 0, startY = 0, dragged = false;
+      var pointerId = null, startX = 0, startY = 0;
 
       el.addEventListener("pointerdown", function (e) {
         pointerId = e.pointerId;
         startX = e.clientX;
         startY = e.clientY;
-        dragged = false;
+        lookStickDragged = false;
       });
       window.addEventListener("pointermove", function (e) {
         if (e.pointerId !== pointerId) return;
         var dx = e.clientX - startX, dy = e.clientY - startY;
-        if (Math.sqrt(dx * dx + dy * dy) > TAP_MOVE_THRESHOLD) dragged = true;
+        if (Math.sqrt(dx * dx + dy * dy) > TAP_MOVE_THRESHOLD) lookStickDragged = true;
       });
       window.addEventListener("pointerup", function (e) {
         if (e.pointerId !== pointerId) return;
         pointerId = null;
-        if (!dragged) tap("Control");
+        if (!lookStickDragged) tap("Control");
       });
     })();
 
