@@ -1580,15 +1580,28 @@
     // continuously while dragging (dx/dy already clamped to +-100);
     // `onStart`/`onEnd` fire once each, on pointerdown/pointerup, before
     // the first onMove(0,0)-equivalent reset.
+    //
+    // Movement is measured from wherever THIS touch first landed
+    // (originX/Y, captured on pointerdown), not from the base element's
+    // visual center. A real thumb rarely lands on the exact center
+    // pixel of a small on-screen stick; measuring from the base's true
+    // center meant an off-center tap registered as an immediate partial
+    // push in whatever direction the tap happened to land relative to
+    // center, moving the character in a direction never intended.
+    // Treating the touch-down point itself as "center" (the same idea
+    // setupLookStickTap already uses to tell a tap from a drag, just
+    // applied here to the actual movement output) means a tap-and-hold
+    // in place always reads as zero deflection, and only deliberate
+    // movement *away from where you first touched* produces any push.
     function setupStick(baseId, knobId, maxDist, deadzone, onMove, onStart, onEnd) {
       var base = document.getElementById(baseId);
       var knob = document.getElementById(knobId);
       var pointerId = null;
+      var originX = 0, originY = 0;
 
       function update(clientX, clientY) {
-        var rect = base.getBoundingClientRect();
-        var dx = clientX - (rect.left + rect.width / 2);
-        var dy = clientY - (rect.top + rect.height / 2);
+        var dx = clientX - originX;
+        var dy = clientY - originY;
         var dist = Math.sqrt(dx * dx + dy * dy);
         var clamped = Math.min(dist, maxDist);
         var angle = Math.atan2(dy, dx);
@@ -1608,6 +1621,8 @@
       base.addEventListener("pointerdown", function (e) {
         e.preventDefault();
         pointerId = e.pointerId;
+        originX = e.clientX;
+        originY = e.clientY;
         // Without this, dragging past the stick's own edges hands the
         // gesture to whatever element is physically under the finger next,
         // which lacks touch-action:none -- the browser then tries its
@@ -1617,7 +1632,7 @@
         try { base.setPointerCapture(e.pointerId); } catch (err) {}
         document.getElementById("canvas").focus();
         if (onStart) onStart();
-        update(e.clientX, e.clientY);
+        update(e.clientX, e.clientY); // dx=dy=0 by construction -- this touch's start point *is* the origin
       });
       window.addEventListener("pointermove", function (e) {
         if (e.pointerId !== pointerId) return;
