@@ -124,20 +124,28 @@
       flex-direction: column;
       align-items: center;
       gap: 10px;
-      padding-top: 10px;
+      padding-top: 4px;
     }
     .touch-controls {
       display: none;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
+      gap: 4px;
       width: 100%;
-      padding: 4px 16px 10px;
+      padding: 0 12px 6px;
     }
+    /* align-items: flex-start (not center, the original) -- with it
+       centered, every child in this row got vertically centered against
+       the *tallest* one (the 160px move stick), so the look stick (110px)
+       and tc-fire-row above it ended up separated by ~25px of pure
+       centering slack neither of them asked for, on top of the row gap
+       itself. Top-aligning removes that slack; the extra room it frees
+       up just moves below the shorter items instead, which costs nothing
+       since the move stick alone still sets the row's height either way. */
     .touch-controls-row {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       width: 100%;
     }
     .key-legend {
@@ -215,7 +223,13 @@
     body.force-touch-controls .touch-controls { display: flex; }
     body.force-keyboard-controls .key-legend { display: flex; }
     body.force-keyboard-controls .touch-controls { display: none; }
-    .touch-group { display: flex; gap: 14px; align-items: center; }
+    /* align-items: flex-start, same reasoning as .touch-controls-row's own
+       comment below -- centered the shorter look stick (110px) against
+       the taller USE/WPN stack (134px), adding slack above the stick on
+       top of that row's own centering against the move stick. Top-
+       aligning both levels is what actually closes the gap between
+       tc-fire-row and the stick under it. */
+    .touch-group { display: flex; gap: 14px; align-items: flex-start; }
     /* This project's own `display: flex` above is an *author* rule, which
        always wins over the browser's built-in `[hidden] { display: none }`
        UA rule regardless of selector specificity -- so setting .hidden on
