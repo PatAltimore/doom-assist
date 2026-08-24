@@ -221,7 +221,7 @@
        UA rule regardless of selector specificity -- so setting .hidden on
        #tc-play-group/#tc-menu-group did nothing without this override,
        and both touch control sets rendered on top of each other at once. */
-    #tc-play-group[hidden], #tc-menu-group[hidden] { display: none; }
+    #tc-play-group[hidden], #tc-menu-group[hidden], #tc-fire-row[hidden] { display: none; }
     /* Stylized to read as physical hardware -- radial-gradient shading for
        a molded-plastic look, an offset solid shadow ("0 Npx 0 <color>")
        for a raised 3D button that visibly depresses on :active. */
@@ -347,30 +347,22 @@
       font-size: 13px;
       background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
     }
-    /* Positions tc-fire above/right of the look stick without making it a
-       DOM descendant of #tc-look-joystick -- setupStick's pointerdown
-       listener is on the joystick element itself and relies on bubbling,
-       so a button *inside* it would double-fire the stick's own turn/fire
-       handling on every tap. A sibling under this wrapper instead.
-       Pinning it fully above the joystick's box (bottom: 100%, an earlier
-       attempt) guaranteed zero overlap with the joystick's own square
-       hit-area, but pushed the button above the whole control row and
-       into the game canvas above it -- confirmed too tall for the
-       clearance actually available there. This keeps the button's top
-       at/below the joystick's own top edge instead, so it never reaches
-       higher than the joystick already does, at the cost of a small
-       overlap with the outer corner of the joystick's square (not its
-       circle -- see #tc-look-joystick's own comment). That corner sits
-       well outside the stick's functional deflection range (maxDist=38
-       out of the square's 55px half-width), so the overlap costs no real
-       joystick precision; z-index here just makes sure the button wins
-       the sliver instead of the joystick swallowing the tap. */
-    .touch-joystick-look-wrap { position: relative; }
-    .touch-btn-fire-wrap {
-      position: absolute;
-      top: 4px;
-      right: -8px;
-      z-index: 2;
+    /* A normal-flow row, not an overlay -- two earlier attempts pinned
+       the button to a corner of the look stick with absolute positioning,
+       and both ended up overlapping *something* (the stick's own square
+       hit-area, or the game canvas above the controls) because this
+       viewport is too narrow for a 52px button to clear the stick on
+       either axis while also fitting. A plain sibling row above
+       .touch-controls-row can't overlap the stick below it by
+       construction, and only adds height under the canvas, never over
+       it (see the HTML comment above #tc-fire-row). Right-aligned within
+       the same 16px side padding .touch-controls-row itself sits in, so
+       it lines up over the look stick's side of the row without needing
+       to know that row's exact contents or widths. */
+    .touch-fire-row {
+      display: flex;
+      justify-content: flex-end;
+      width: 100%;
     }
     .touch-btn-fire {
       font-size: 15px;
@@ -622,13 +614,38 @@
 
       <div class="game-controls" id="game-controls">
         <div class="touch-controls">
+          <!-- Dedicated Fire button, in its own row above the twin-stick
+               row rather than overlaid on/near the turn stick -- an
+               earlier absolutely-positioned attempt pinned to the stick's
+               own corner either overlapped the stick's square hit-area or,
+               pushed further out to avoid that, overlapped the game canvas
+               above the controls (this viewport is too narrow for a 52px
+               button to clear the stick on either the top or right edge
+               alone). A normal-flow sibling row can't overlap anything
+               below it by construction, and .game-controls sizes
+               independently of the canvas (see sizeCanvasWrap/.canvas-wrap
+               above), so this row only ever adds height below the canvas,
+               never over it. Hidden/shown together with the rest of the
+               play controls -- see pollTouchMenuMode below. -->
+          <div class="touch-fire-row" id="tc-fire-row">
+            <!-- A real hold button (bindHoldButton, same as USE), not a
+                 tap-only one: a real weapon's own attack state already
+                 decides single-shot-per-press vs. full-auto/chainsaw-
+                 while-held, the same way holding down a real Fire key
+                 would. Requested for weapons where the tap-to-fire stick
+                 isn't enough -- you'd have to re-tap for every shot
+                 instead of holding through a chaingun/chainsaw burst.
+                 Purely additive: the look stick's own tap-to-fire (in the
+                 row below) still works exactly as before. -->
+            <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
+          </div>
           <div class="touch-controls-row">
             <!-- Twin-stick: left stick moves (forward/back + strafe left/
                  right), right stick turns and doubles as Fire -- touching
                  it down dispatches the real Fire key and keeps it held for
                  as long as your finger is, so a tap is a single shot and
                  holding it fires continuously, same as a real key would.
-                 tc-fire below is an *additional* dedicated Fire button, not
+                 tc-fire above is an *additional* dedicated Fire button, not
                  a replacement -- see bindHoldButton's call site below. -->
             <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
               <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
@@ -647,25 +664,9 @@
                      this needs pressing. -->
                 <button class="touch-btn touch-btn-small touch-btn-weapon" id="tc-weapon" aria-label="Next weapon">WPN</button>
               </div>
-              <div class="touch-joystick-look-wrap">
-                <!-- Dedicated Fire button, sitting above/right of the turn
-                     stick rather than inside its flex row -- a real hold
-                     button (bindHoldButton, same as USE), not a tap-only
-                     one: a real weapon's own attack state already decides
-                     single-shot-per-press vs. full-auto/chainsaw-while-held,
-                     the same way holding down a real Fire key would.
-                     Requested for weapons where the tap-to-fire stick isn't
-                     enough -- you'd have to re-tap for every shot instead of
-                     holding through a chaingun/chainsaw burst. Purely
-                     additive: the look stick's own tap-to-fire (below) still
-                     works exactly as before. -->
-                <div class="touch-btn-fire-wrap">
-                  <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
-                </div>
-                <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
-                  <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
-                  <span class="touch-joystick-label">Turn / Fire</span>
-                </div>
+              <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+                <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+                <span class="touch-joystick-label">Turn / Fire</span>
               </div>
             </div>
             <!-- Shown instead of Use/Fire whenever a menu might be on screen
@@ -1557,6 +1558,7 @@
     var knownInGameplay = true; // assume real play until first poll says otherwise
     var tcPlayGroup = document.getElementById("tc-play-group");
     var tcMenuGroup = document.getElementById("tc-menu-group");
+    var tcFireRow = document.getElementById("tc-fire-row");
 
     function pollTouchMenuMode() {
       if (typeof Module === "undefined" || !Module.ccall) return;
@@ -1567,6 +1569,10 @@
         knownInGameplay = gs === GS_LEVEL_FOR_TOUCH && !menuActive && !demoPlaying;
         tcPlayGroup.hidden = !knownInGameplay;
         tcMenuGroup.hidden = knownInGameplay;
+        // tc-fire-row is a sibling of touch-controls-row now (see its own
+        // HTML comment), not a descendant of tc-play-group, so it needs
+        // this same show/hide applied explicitly rather than inheriting it.
+        tcFireRow.hidden = !knownInGameplay;
       } catch (e) { /* engine not ready yet */ }
     }
     setInterval(pollTouchMenuMode, 500);
