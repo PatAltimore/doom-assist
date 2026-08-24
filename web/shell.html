@@ -124,7 +124,15 @@
       flex-direction: column;
       align-items: center;
       gap: 10px;
-      padding-top: 4px;
+      /* 10px, not the 4px an earlier padding-trim pass left this at --
+         tc-fire now floats above the pill via bottom:100% (see
+         .touch-btn-fire's comment), and needs the canvas-to-row gap plus
+         the row's own centering slack above the pill (both fixed by CSS:
+         the move stick's explicit 160px height doesn't shrink the way its
+         width does, so that slack is reliable) to add up to at least the
+         button's height plus its own small margin. 4px left that ~2px
+         short, confirmed by measuring an actual overlap in-browser. */
+      padding-top: 10px;
     }
     .touch-controls {
       display: none;
@@ -134,18 +142,20 @@
       width: 100%;
       padding: 0 12px 6px;
     }
-    /* align-items: flex-start (not center, the original) -- with it
-       centered, every child in this row got vertically centered against
-       the *tallest* one (the 160px move stick), so the look stick (110px)
-       and tc-fire-row above it ended up separated by ~25px of pure
-       centering slack neither of them asked for, on top of the row gap
-       itself. Top-aligning removes that slack; the extra room it frees
-       up just moves below the shorter items instead, which costs nothing
-       since the move stick alone still sets the row's height either way. */
+    /* align-items: center -- back to centered (an earlier revision used
+       flex-start instead, to close a gap the old 110px circular look
+       stick left above itself when centered against the 160px move
+       stick). Now that the look control is the much shorter horizontal
+       pill (56px), centering is what actually lines its center up with
+       the move stick's center, per feedback -- flex-start left it
+       floating near the top of the row instead. The AUTO fire button
+       moves down right along with the pill now too, since it floats
+       directly above it via absolute positioning -- see .touch-btn-fire
+       and .touch-joystick-look-wrap below. */
     .touch-controls-row {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       width: 100%;
     }
     .key-legend {
@@ -223,19 +233,19 @@
     body.force-touch-controls .touch-controls { display: flex; }
     body.force-keyboard-controls .key-legend { display: flex; }
     body.force-keyboard-controls .touch-controls { display: none; }
-    /* align-items: flex-start, same reasoning as .touch-controls-row's own
-       comment below -- centered the shorter look stick (110px) against
-       the taller USE/WPN stack (134px), adding slack above the stick on
-       top of that row's own centering against the move stick. Top-
-       aligning both levels is what actually closes the gap between
-       tc-fire-row and the stick under it. */
-    .touch-group { display: flex; gap: 14px; align-items: flex-start; }
+    /* align-items: center -- back to centered, same reasoning as
+       .touch-controls-row's own comment above: with the look control now
+       a short 56px pill, centering it against the taller USE/WPN stack
+       (134px) here, nested inside that row's own centering against the
+       160px move stick, is what makes the pill's center land exactly on
+       the move stick's center. */
+    .touch-group { display: flex; gap: 14px; align-items: center; }
     /* This project's own `display: flex` above is an *author* rule, which
        always wins over the browser's built-in `[hidden] { display: none }`
        UA rule regardless of selector specificity -- so setting .hidden on
        #tc-play-group/#tc-menu-group did nothing without this override,
        and both touch control sets rendered on top of each other at once. */
-    #tc-play-group[hidden], #tc-menu-group[hidden], #tc-fire-row[hidden] { display: none; }
+    #tc-play-group[hidden], #tc-menu-group[hidden] { display: none; }
     /* Stylized to read as physical hardware -- radial-gradient shading for
        a molded-plastic look, an offset solid shadow ("0 Npx 0 <color>")
        for a raised 3D button that visibly depresses on :active. */
@@ -275,11 +285,11 @@
        dimension the engine never looked at. A horizontal pill (dropping
        .touch-joystick's circular width/height/border-radius, not just
        shrinking them) keeps decent left/right travel and tap-to-fire area
-       in a fraction of the height, which is what actually let tc-fire-row
-       move closer to it. setupStick still gets a maxDist/deadzone in its
-       usual single-axis-of-travel sense (see its `xOnly` parameter) --
-       there's no separate "horizontal joystick" helper, just this one
-       constrained to one axis. Width kept at/under the old circle's
+       in a fraction of the height, which is what actually let the AUTO
+       fire button sit close above it. setupStick still gets a maxDist/
+       deadzone in its usual single-axis-of-travel sense (see its `xOnly`
+       parameter) -- there's no separate "horizontal joystick" helper,
+       just this one constrained to one axis. Width kept at/under the old circle's
        110px, not grown to fill the pill's new headroom: .touch-controls-
        row has no spare width to give it -- move stick (160) + USE/WPN
        column (72) + this already use every pixel .touch-controls'
@@ -378,24 +388,33 @@
       font-size: 13px;
       background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
     }
-    /* A normal-flow row, not an overlay -- two earlier attempts pinned
-       the button to a corner of the look stick with absolute positioning,
-       and both ended up overlapping *something* (the stick's own square
-       hit-area, or the game canvas above the controls) because this
-       viewport is too narrow for a 52px button to clear the stick on
-       either axis while also fitting. A plain sibling row above
-       .touch-controls-row can't overlap the stick below it by
-       construction, and only adds height under the canvas, never over
-       it (see the HTML comment above #tc-fire-row). Right-aligned within
-       the same 16px side padding .touch-controls-row itself sits in, so
-       it lines up over the look stick's side of the row without needing
-       to know that row's exact contents or widths. */
-    .touch-fire-row {
-      display: flex;
-      justify-content: flex-end;
-      width: 100%;
-    }
+    .touch-joystick-look-wrap { position: relative; }
+    /* Floats above the pill via bottom: 100%, contributing no height to
+       the flex layout the pill sits in (see the HTML comment above
+       .touch-joystick-look-wrap for why that matters -- it's what keeps
+       the pill centering identically to before this button existed).
+       Centered on the pill horizontally with left:50%/translateX(-50%)
+       rather than right-aligned to its edge (an earlier version) --
+       simpler to reason about once the button no longer has to dodge a
+       taller/wider stick shape. Two earlier absolutely-positioned
+       attempts, both against the old 110px circular stick, overlapped
+       either the stick's own square hit-area or the game canvas above
+       the row; this one clears the stick's hit-area for free (its own
+       square is exactly the pill's box, and this button sits fully
+       above it). Clearing the canvas took one more change, though: the
+       centered pill's ~52px of headroom within the row (the move stick's
+       own fixed 160px height, not shrunk by centering the shorter pill
+       inside it) plus the row's own gap above the canvas only added up
+       to this button's 58px need (52px tall + 6px margin) after bumping
+       .game-controls' padding-top from 4px to 10px -- confirmed by
+       measuring an actual 2px overlap in-browser before that change,
+       and a clean 4px gap after it, across repeated fresh loads. */
     .touch-btn-fire {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-bottom: 6px;
       font-size: 15px;
       background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
     }
@@ -645,39 +664,15 @@
 
       <div class="game-controls" id="game-controls">
         <div class="touch-controls">
-          <!-- Dedicated Fire button, in its own row above the twin-stick
-               row rather than overlaid on/near the turn stick -- an
-               earlier absolutely-positioned attempt pinned to the stick's
-               own corner either overlapped the stick's square hit-area or,
-               pushed further out to avoid that, overlapped the game canvas
-               above the controls (this viewport is too narrow for a 52px
-               button to clear the stick on either the top or right edge
-               alone). A normal-flow sibling row can't overlap anything
-               below it by construction, and .game-controls sizes
-               independently of the canvas (see sizeCanvasWrap/.canvas-wrap
-               above), so this row only ever adds height below the canvas,
-               never over it. Hidden/shown together with the rest of the
-               play controls -- see pollTouchMenuMode below. -->
-          <div class="touch-fire-row" id="tc-fire-row">
-            <!-- A real hold button (bindHoldButton, same as USE), not a
-                 tap-only one: a real weapon's own attack state already
-                 decides single-shot-per-press vs. full-auto/chainsaw-
-                 while-held, the same way holding down a real Fire key
-                 would. Requested for weapons where the tap-to-fire stick
-                 isn't enough -- you'd have to re-tap for every shot
-                 instead of holding through a chaingun/chainsaw burst.
-                 Purely additive: the look stick's own tap-to-fire (in the
-                 row below) still works exactly as before. -->
-            <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
-          </div>
           <div class="touch-controls-row">
             <!-- Twin-stick: left stick moves (forward/back + strafe left/
                  right), right stick turns and doubles as Fire -- touching
                  it down dispatches the real Fire key and keeps it held for
                  as long as your finger is, so a tap is a single shot and
                  holding it fires continuously, same as a real key would.
-                 tc-fire above is an *additional* dedicated Fire button, not
-                 a replacement -- see bindHoldButton's call site below. -->
+                 tc-fire (stacked above the pill below) is an *additional*
+                 dedicated Fire button, not a replacement -- see
+                 bindHoldButton's call site below. -->
             <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
               <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
               <span class="touch-joystick-label">Move</span>
@@ -695,9 +690,43 @@
                      this needs pressing. -->
                 <button class="touch-btn touch-btn-small touch-btn-weapon" id="tc-weapon" aria-label="Next weapon">WPN</button>
               </div>
-              <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
-                <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
-                <span class="touch-joystick-label">Turn / Fire</span>
+              <!-- Wraps just the pill, not the pill+button together --
+                   putting the button in the same flex column as the pill
+                   (an earlier attempt) changed the group's own height, so
+                   centering *that* against the move stick centered the
+                   button+pill pair as a unit instead of the pill alone,
+                   leaving the pill's own center offset below the move
+                   stick's by roughly half the button's height. This
+                   wrapper is exactly the pill's size (position: relative,
+                   no extra content in normal flow), so it centers
+                   identically to how the bare pill did before; tc-fire
+                   floats above it via absolute positioning instead,
+                   contributing no height to the flex layout at all. Safe
+                   from canvas overlap even fully above the pill now
+                   (unlike the two taller/wider attempts before this one)
+                   because the pill itself, once centered, already sits
+                   well clear of the canvas above the row -- see
+                   .touch-btn-fire's own comment for the actual numbers.
+                   tc-fire is a sibling of the joystick element inside
+                   this wrapper, not a descendant of it, so setupStick's
+                   pointerdown listener (attached to the joystick itself)
+                   never sees taps on the button -- see setupStick's own
+                   comment on why that matters. -->
+              <div class="touch-joystick-look-wrap">
+                <!-- A real hold button (bindHoldButton, same as USE), not
+                     a tap-only one: a real weapon's own attack state
+                     already decides single-shot-per-press vs. full-auto/
+                     chainsaw-while-held, the same way holding down a real
+                     Fire key would. Requested for weapons where the
+                     tap-to-fire pill isn't enough -- you'd have to re-tap
+                     for every shot instead of holding through a chaingun/
+                     chainsaw burst. Purely additive: the pill's own
+                     tap-to-fire (below) still works exactly as before. -->
+                <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
+                <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+                  <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+                  <span class="touch-joystick-label">Turn / Fire</span>
+                </div>
               </div>
             </div>
             <!-- Shown instead of Use/Fire whenever a menu might be on screen
@@ -1589,7 +1618,6 @@
     var knownInGameplay = true; // assume real play until first poll says otherwise
     var tcPlayGroup = document.getElementById("tc-play-group");
     var tcMenuGroup = document.getElementById("tc-menu-group");
-    var tcFireRow = document.getElementById("tc-fire-row");
 
     function pollTouchMenuMode() {
       if (typeof Module === "undefined" || !Module.ccall) return;
@@ -1600,10 +1628,9 @@
         knownInGameplay = gs === GS_LEVEL_FOR_TOUCH && !menuActive && !demoPlaying;
         tcPlayGroup.hidden = !knownInGameplay;
         tcMenuGroup.hidden = knownInGameplay;
-        // tc-fire-row is a sibling of touch-controls-row now (see its own
-        // HTML comment), not a descendant of tc-play-group, so it needs
-        // this same show/hide applied explicitly rather than inheriting it.
-        tcFireRow.hidden = !knownInGameplay;
+        // tc-fire is a descendant of tc-play-group now (floating above
+        // the pill -- see .touch-joystick-look-wrap), so it inherits
+        // this show/hide automatically and needs no separate toggle here.
       } catch (e) { /* engine not ready yet */ }
     }
     setInterval(pollTouchMenuMode, 500);
