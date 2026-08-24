@@ -347,6 +347,41 @@
       font-size: 13px;
       background: radial-gradient(circle at 35% 28%, #aeae9e, var(--gray) 60%, #45453f 100%);
     }
+    /* Positions tc-fire above/right of the look stick without making it a
+       DOM descendant of #tc-look-joystick -- setupStick's pointerdown
+       listener is on the joystick element itself and relies on bubbling,
+       so a button *inside* it would double-fire the stick's own turn/fire
+       handling on every tap. Siblings under this wrapper instead.
+       #tc-look-joystick's clickable area is its full square bounding box
+       (110x110), not just the circle border-radius draws -- pinning the
+       button to the box's corner (the first thing tried) still landed
+       inside that square, silently stealing a slice of the joystick's own
+       touch target. `bottom: 100%` instead puts the button's *entire* box
+       strictly above the joystick's square, which alone is enough to
+       guarantee zero overlap regardless of how far right it's nudged. */
+    .touch-joystick-look-wrap { position: relative; }
+    .touch-btn-fire-wrap {
+      position: absolute;
+      bottom: 100%;
+      margin-bottom: 8px;
+      right: -10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .touch-btn-fire {
+      font-size: 15px;
+      background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
+    }
+    .touch-btn-label {
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      white-space: nowrap;
+      pointer-events: none;
+    }
     .assist-panel {
       flex: 0 0 340px;
       max-width: 100%;
@@ -599,8 +634,8 @@
                  it down dispatches the real Fire key and keeps it held for
                  as long as your finger is, so a tap is a single shot and
                  holding it fires continuously, same as a real key would.
-                 There's no separate Fire button because of this -- see
-                 setupLookStick below. -->
+                 tc-fire below is an *additional* dedicated Fire button, not
+                 a replacement -- see bindHoldButton's call site below. -->
             <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
               <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
               <span class="touch-joystick-label">Move</span>
@@ -618,9 +653,26 @@
                      this needs pressing. -->
                 <button class="touch-btn touch-btn-small touch-btn-weapon" id="tc-weapon" aria-label="Next weapon">WPN</button>
               </div>
-              <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
-                <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
-                <span class="touch-joystick-label">Turn / Fire</span>
+              <div class="touch-joystick-look-wrap">
+                <!-- Dedicated Fire button, sitting above/right of the turn
+                     stick rather than inside its flex row -- a real hold
+                     button (bindHoldButton, same as USE), not a tap-only
+                     one: a real weapon's own attack state already decides
+                     single-shot-per-press vs. full-auto/chainsaw-while-held,
+                     the same way holding down a real Fire key would.
+                     Requested for weapons where the tap-to-fire stick isn't
+                     enough -- you'd have to re-tap for every shot instead of
+                     holding through a chaingun/chainsaw burst. Purely
+                     additive: the look stick's own tap-to-fire (below) still
+                     works exactly as before. -->
+                <div class="touch-btn-fire-wrap">
+                  <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
+                  <span class="touch-btn-label">Fire</span>
+                </div>
+                <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+                  <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
+                  <span class="touch-joystick-label">Turn / Fire</span>
+                </div>
               </div>
             </div>
             <!-- Shown instead of Use/Fire whenever a menu might be on screen
@@ -1572,6 +1624,13 @@
       el.addEventListener("pointerleave", release);
     }
     bindHoldButton(document.getElementById("tc-use"), "Space");
+    // Dedicated Fire button (see the HTML comment above tc-fire): the same
+    // real Fire key (Control) the look stick's own tap-to-fire dispatches,
+    // just held for as long as the button is down instead of a fixed 45ms
+    // tap -- a real weapon's attack state is what actually decides
+    // single-shot vs. full-auto/chainsaw from there, exactly as it would
+    // for a held keyboard key.
+    bindHoldButton(document.getElementById("tc-fire"), "Control");
 
     // Shared drag-tracking behind both touch sticks below: pointer capture,
     // deadzone/clamp math, and knob positioning are identical between them
