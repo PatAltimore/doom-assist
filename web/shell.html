@@ -268,17 +268,34 @@
       box-shadow: 0 5px 8px rgba(0, 0, 0, 0.55), inset 0 -3px 5px rgba(0, 0, 0, 0.18);
       pointer-events: none;
     }
-    /* Right (look/fire) stick: smaller than the move stick since it
-       shares a row with USE rather than anchoring the whole control bar,
-       and its knob is tinted red -- the same red the old dedicated FIRE
-       button used -- as a visual reminder that touching it fires. */
+    /* Right (look/fire) control: turning only ever uses left/right --
+       assist_set_turn (assist.c) takes a single axis, and
+       assist_apply_touch_controls has never read a Y component from it --
+       so a full circular stick here was spending vertical space on a
+       dimension the engine never looked at. A horizontal pill (dropping
+       .touch-joystick's circular width/height/border-radius, not just
+       shrinking them) keeps decent left/right travel and tap-to-fire area
+       in a fraction of the height, which is what actually let tc-fire-row
+       move closer to it. setupStick still gets a maxDist/deadzone in its
+       usual single-axis-of-travel sense (see its `xOnly` parameter) --
+       there's no separate "horizontal joystick" helper, just this one
+       constrained to one axis. Width kept at/under the old circle's
+       110px, not grown to fill the pill's new headroom: .touch-controls-
+       row has no spare width to give it -- move stick (160) + USE/WPN
+       column (72) + this already use every pixel .touch-controls'
+       padding leaves on a 375px phone, and flex items shrink by default
+       once content overflows, which a wider first attempt confirmed by
+       visibly squashing the move stick. Knob still tinted red, the same
+       red the old dedicated FIRE button used, as a visual reminder that
+       touching it fires. */
     .touch-joystick-look {
-      width: 110px;
-      height: 110px;
+      width: 100px;
+      height: 56px;
+      border-radius: 28px;
     }
     .touch-joystick-knob-look {
-      width: 50px;
-      height: 50px;
+      width: 46px;
+      height: 46px;
       background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
     }
     /* Sits below the stick rather than on it -- the knob already fills
@@ -1665,7 +1682,14 @@
     // applied here to the actual movement output) means a tap-and-hold
     // in place always reads as zero deflection, and only deliberate
     // movement *away from where you first touched* produces any push.
-    function setupStick(baseId, knobId, maxDist, deadzone, onMove, onStart, onEnd) {
+    // xOnly (used by the look/turn control below): turning is a single
+    // axis in the engine (assist_set_turn takes one value, never a Y),
+    // so its track is a horizontal pill rather than a circle. Forcing
+    // dy to 0 here is the only change that needs -- clamped's magnitude,
+    // the deadzone check, and the knob's own translate all already
+    // reduce to pure horizontal motion once dy is always 0, with no
+    // separate math path required.
+    function setupStick(baseId, knobId, maxDist, deadzone, onMove, onStart, onEnd, xOnly) {
       var base = document.getElementById(baseId);
       var knob = document.getElementById(knobId);
       var pointerId = null;
@@ -1673,7 +1697,7 @@
 
       function update(clientX, clientY) {
         var dx = clientX - originX;
-        var dy = clientY - originY;
+        var dy = xOnly ? 0 : (clientY - originY);
         var dist = Math.sqrt(dx * dx + dy * dy);
         var clamped = Math.min(dist, maxDist);
         var angle = Math.atan2(dy, dx);
@@ -1746,7 +1770,12 @@
     // so unless a tap landed on the exact center pixel (never), a plain
     // tap-to-fire was also nudging the view a few degrees.
     var lookStickDragged = false;
-    setupStick("tc-look-joystick", "tc-look-joystick-knob", 38, 6, function (dx) {
+    // maxDist=27: the pill is 100px wide with a 46px knob, so the knob's
+    // center has about 27px of travel to each side before it would push
+    // past the track's rounded end -- matches the old stick's approach of
+    // maxDist being "how far the knob can actually go", just recomputed
+    // for the new shape instead of reusing the circle's old 38.
+    setupStick("tc-look-joystick", "tc-look-joystick-knob", 27, 6, function (dx) {
       if (typeof Module === "undefined" || !Module.ccall) return;
       try { Module.ccall("assist_set_turn", null, ["number"], [lookStickDragged ? dx : 0]); }
       catch (e) { /* engine not ready yet */ }
@@ -1757,7 +1786,7 @@
       // "dragged" from the gesture before it, regardless of which of the
       // two pointerdown listeners on this element happens to run first.
       lookStickDragged = false;
-    });
+    }, true);
 
     // Tap-to-fire, tracked independently of setupStick's own drag/deflection
     // handling above -- a first attempt tried to reuse that deflection
@@ -1784,8 +1813,12 @@
       });
       window.addEventListener("pointermove", function (e) {
         if (e.pointerId !== pointerId) return;
-        var dx = e.clientX - startX, dy = e.clientY - startY;
-        if (Math.sqrt(dx * dx + dy * dy) > TAP_MOVE_THRESHOLD) lookStickDragged = true;
+        // Horizontal distance only, matching setupStick's own xOnly turn
+        // this control now uses -- a finger drifting vertically on the
+        // pill doesn't turn anything, so it shouldn't cancel the tap
+        // either.
+        var dx = e.clientX - startX;
+        if (Math.abs(dx) > TAP_MOVE_THRESHOLD) lookStickDragged = true;
       });
       window.addEventListener("pointerup", function (e) {
         if (e.pointerId !== pointerId) return;
