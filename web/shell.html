@@ -393,27 +393,26 @@
        the flex layout the pill sits in (see the HTML comment above
        .touch-joystick-look-wrap for why that matters -- it's what keeps
        the pill centering identically to before this button existed).
-       Centered on the pill horizontally with left:50%/translateX(-50%)
-       rather than right-aligned to its edge (an earlier version) --
-       simpler to reason about once the button no longer has to dodge a
-       taller/wider stick shape. Two earlier absolutely-positioned
-       attempts, both against the old 110px circular stick, overlapped
-       either the stick's own square hit-area or the game canvas above
-       the row; this one clears the stick's hit-area for free (its own
-       square is exactly the pill's box, and this button sits fully
-       above it). Clearing the canvas took one more change, though: the
-       centered pill's ~52px of headroom within the row (the move stick's
-       own fixed 160px height, not shrunk by centering the shorter pill
-       inside it) plus the row's own gap above the canvas only added up
-       to this button's 58px need (52px tall + 6px margin) after bumping
-       .game-controls' padding-top from 4px to 10px -- confirmed by
-       measuring an actual 2px overlap in-browser before that change,
-       and a clean 4px gap after it, across repeated fresh loads. */
+       Right-aligned to the pill's own right edge (right: 0, no
+       transform) -- top-right of the pill, per feedback; an earlier
+       version centered it horizontally instead. Two earlier absolutely-
+       positioned attempts, both against the old 110px circular stick,
+       overlapped either the stick's own square hit-area or the game
+       canvas above the row; this one clears the stick's hit-area for
+       free (its own square is exactly the pill's box, and this button
+       sits fully above it). Clearing the canvas took one more change,
+       though: the centered pill's ~52px of headroom within the row (the
+       move stick's own fixed 160px height, not shrunk by centering the
+       shorter pill inside it) plus the row's own gap above the canvas
+       only added up to this button's 58px need (52px tall + 6px margin)
+       after bumping .game-controls' padding-top from 4px to 10px --
+       confirmed by measuring an actual 2px overlap in-browser before
+       that change, and a clean 4px gap after it, across repeated fresh
+       loads. */
     .touch-btn-fire {
       position: absolute;
       bottom: 100%;
-      left: 50%;
-      transform: translateX(-50%);
+      right: 0;
       margin-bottom: 6px;
       font-size: 15px;
       background: radial-gradient(circle at 35% 28%, var(--red-bright), var(--red) 60%, #2a0c07 100%);
