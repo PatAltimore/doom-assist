@@ -2,6 +2,8 @@
 
 A browser-playable build of the original 1993 *DOOM* (shareware episode, "Knee-Deep in the Dead"), with an "assist mode" sidebar (real cheat codes, the game's own automap, per-map hints) that links out to [Code Museum](https://blue-rock-0e6a0831e.7.azurestaticapps.net/#/doom)'s annotated source pages for the underlying code.
 
+Play the game at [https://black-bush-058f51c1e.7.azurestaticapps.net/](https://black-bush-058f51c1e.7.azurestaticapps.net/).
+
 ## What's here
 
 - `engine/` — [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric) (a portability fork of id Software's [linuxdoom-1.10](https://github.com/id-Software/DOOM/tree/master/linuxdoom-1.10) source that isolates platform-specific video/sound/input behind a handful of functions and already ships a working Emscripten target), vendored directly rather than as a git submodule -- it needs two small local patches (below), which a plain submodule pin can't carry across a fresh clone.
