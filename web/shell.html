@@ -108,6 +108,12 @@
     .resume-banner p { margin: 0 0 10px; color: var(--white); font-size: 17px; line-height: 1.4; }
     .resume-banner-actions { display: flex; gap: 10px; justify-content: center; }
     .resume-banner-actions .assist-btn { font-size: 15px; padding: 6px 14px; flex: 0 0 auto; }
+    /* Same author-rule-beats-[hidden] gotcha as #tc-play-group/#tc-menu-group
+       above -- .resume-banner-actions' own `display: flex` always wins
+       over the browser's UA `[hidden] { display: none }` rule regardless
+       of specificity, so setting .hidden on it after Resume is clicked
+       (see that handler) would do nothing without this override. */
+    #resume-banner-actions[hidden] { display: none; }
     /* Game controls strip: below the canvas (not overlaid on top of it --
        an overlay partially obscures the 3D view, a strip underneath
        doesn't). The twin-stick/use row and the keyboard legend below are
@@ -653,8 +659,8 @@
       <div class="canvas-wrap" id="canvas-wrap">
         <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1" width="640" height="400"></canvas>
         <div class="resume-banner" id="resume-banner" hidden>
-          <p>Saved game found — probably from an accidental refresh.</p>
-          <div class="resume-banner-actions">
+          <p id="resume-banner-text">Saved game found — probably from an accidental refresh. Resume to continue exactly where you left off, or dismiss to start over from the title screen.</p>
+          <div class="resume-banner-actions" id="resume-banner-actions">
             <button class="assist-btn" id="resume-yes">Resume</button>
             <button class="assist-btn" id="resume-no">Dismiss</button>
           </div>
@@ -1146,23 +1152,55 @@
     // filename -- assist_resume() (assist.c) just calls it directly, so
     // there's no menu sequence to fake here at all.
     var resumeBanner = document.getElementById("resume-banner");
+    var resumeCheckAttempts = 0;
     var resumeCheckInterval = setInterval(function () {
+      // Module.ccall existing isn't the same thing as the autosave being
+      // *readable* yet -- ccall/cwrap are wired up as soon as the JS glue
+      // loads, well before IDBFS's own async mount+sync-from-IndexedDB
+      // (the shell's preRun block, further down) has necessarily
+      // finished. assist_has_autosave() just does a raw fopen() under
+      // /save with no run-dependency gating of its own, so a check that
+      // lands in that window reads "no file" even when one genuinely
+      // exists -- confirmed by hitting this in practice while testing.
+      // The old version cleared this interval unconditionally the first
+      // time ccall was callable at all, so that one unlucky early read
+      // meant the banner would never appear for the rest of the session,
+      // autosave or not. Keep polling on a "no" instead, and only give up
+      // for good after a real answer (has=1) or ~10s of consistent "no".
       if (typeof Module === "undefined" || !Module.ccall) return;
       try {
         var has = Module.ccall("assist_has_autosave", "number", [], []);
-        clearInterval(resumeCheckInterval);
-        if (has) resumeBanner.hidden = false;
+        if (has) {
+          clearInterval(resumeCheckInterval);
+          resumeBanner.hidden = false;
+          return;
+        }
       } catch (e) { /* engine not ready yet -- try again next tick */ }
+      if (++resumeCheckAttempts >= 20) clearInterval(resumeCheckInterval);
     }, 500);
 
     document.getElementById("resume-no").addEventListener("click", function () {
       resumeBanner.hidden = true;
     });
+    // Confirms the result *in the banner itself* rather than hiding it
+    // immediately and hoping a toast elsewhere on screen gets noticed --
+    // your attention is already on the banner when you click this, and
+    // the load it triggers only takes effect on the engine's next tic
+    // (assist_resume's own comment in assist.c), so the view behind the
+    // banner won't visibly jump the instant you click. Also actually
+    // checks assist_resume's return value now (previously ignored, so
+    // "Resuming..." showed unconditionally even on the rare failure --
+    // e.g. the save file having gone missing between the has-autosave
+    // check and this click) instead of just assuming success.
     document.getElementById("resume-yes").addEventListener("click", function () {
-      resumeBanner.hidden = true;
       document.getElementById("canvas").focus();
-      try { Module.ccall("assist_resume", "number", [], []); } catch (e) {}
-      toast("Resuming...");
+      var ok = 0;
+      try { ok = Module.ccall("assist_resume", "number", [], []); } catch (e) {}
+      document.getElementById("resume-banner-actions").hidden = true;
+      document.getElementById("resume-banner-text").textContent = ok
+        ? "Resumed — you're back in your saved game below."
+        : "Couldn't find that save anymore — starting fresh instead.";
+      setTimeout(function () { resumeBanner.hidden = true; }, 1800);
     });
 
     // Always follows the engine's actual current map (see
