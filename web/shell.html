@@ -290,8 +290,8 @@
        so a full circular stick here was spending vertical space on a
        dimension the engine never looked at. A horizontal pill (dropping
        .touch-joystick's circular width/height/border-radius, not just
-       shrinking them) keeps decent left/right travel and tap-to-fire area
-       in a fraction of the height, which is what actually let the AUTO
+       shrinking them) keeps decent left/right travel in a fraction of
+       the height, which is what actually let the AUTO
        fire button sit close above it. setupStick still gets a maxDist/
        deadzone in its usual single-axis-of-travel sense (see its `xOnly`
        parameter) -- there's no separate "horizontal joystick" helper,
@@ -671,13 +671,15 @@
         <div class="touch-controls">
           <div class="touch-controls-row">
             <!-- Twin-stick: left stick moves (forward/back + strafe left/
-                 right), right stick turns and doubles as Fire -- touching
-                 it down dispatches the real Fire key and keeps it held for
-                 as long as your finger is, so a tap is a single shot and
-                 holding it fires continuously, same as a real key would.
-                 tc-fire (stacked above the pill below) is an *additional*
-                 dedicated Fire button, not a replacement -- see
-                 bindHoldButton's call site below. -->
+                 right), right stick turns only -- firing is tc-fire
+                 (stacked above the pill below), a dedicated hold button,
+                 not something the turn stick also does. An earlier
+                 version had the turn stick double as tap-to-fire, but
+                 that's redundant now that a dedicated Fire button exists,
+                 and having both meant every turn had to be checked
+                 against a drag threshold just to keep an incidental tap
+                 from also firing -- see bindHoldButton's call site below
+                 for how tc-fire works instead. -->
             <div class="touch-joystick" id="tc-move-joystick" aria-label="Move / strafe">
               <div class="touch-joystick-knob" id="tc-move-joystick-knob"></div>
               <span class="touch-joystick-label">Move</span>
@@ -722,15 +724,15 @@
                      a tap-only one: a real weapon's own attack state
                      already decides single-shot-per-press vs. full-auto/
                      chainsaw-while-held, the same way holding down a real
-                     Fire key would. Requested for weapons where the
-                     tap-to-fire pill isn't enough -- you'd have to re-tap
-                     for every shot instead of holding through a chaingun/
-                     chainsaw burst. Purely additive: the pill's own
-                     tap-to-fire (below) still works exactly as before. -->
+                     Fire key would. This is now the *only* way to fire
+                     from the touch controls -- the pill used to also
+                     fire on a tap, but that was dropped as redundant once
+                     this button existed (see setupStick's call site for
+                     the pill, further down, for what else that removed). -->
                 <button class="touch-btn touch-btn-small touch-btn-fire" id="tc-fire" aria-label="Fire">AUTO</button>
-                <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn / fire">
+                <div class="touch-joystick touch-joystick-look" id="tc-look-joystick" aria-label="Turn">
                   <div class="touch-joystick-knob touch-joystick-knob-look" id="tc-look-joystick-knob"></div>
-                  <span class="touch-joystick-label">Turn / Fire</span>
+                  <span class="touch-joystick-label">Turn</span>
                 </div>
               </div>
             </div>
@@ -1573,8 +1575,9 @@
     //      is defined in wi_stuff.c but nothing ever calls it, a vanilla-
     //      DOOM quirk that predates this project). Sending Enter here is a
     //      no-op, which is why tapping the stats screen previously did
-    //      nothing. Control is the same real key setupLookStickTap already
-    //      dispatches for tap-to-fire during gameplay, reused here.
+    //      nothing. Control is the same real key tc-fire (the dedicated
+    //      Fire button, bindHoldButton's call site further down) already
+    //      dispatches during gameplay, reused here.
     //   4. Anything else (the attract-mode title/demo loop, or a Y/N
     //      message box like the Quit confirmation, which isn't an
     //      itemized menu at all -- see assist_menu_item_count's own
@@ -1718,12 +1721,13 @@
       el.addEventListener("pointerleave", release);
     }
     bindHoldButton(document.getElementById("tc-use"), "Space");
-    // Dedicated Fire button (see the HTML comment above tc-fire): the same
-    // real Fire key (Control) the look stick's own tap-to-fire dispatches,
-    // just held for as long as the button is down instead of a fixed 45ms
-    // tap -- a real weapon's attack state is what actually decides
-    // single-shot vs. full-auto/chainsaw from there, exactly as it would
-    // for a held keyboard key.
+    // Dedicated Fire button (see the HTML comment above tc-fire): the
+    // real Fire key (Control), held for as long as the button is down --
+    // a real weapon's attack state is what actually decides single-shot
+    // vs. full-auto/chainsaw from there, exactly as it would for a held
+    // keyboard key. This is the only touch control that fires; the turn
+    // stick used to also fire on a tap, but that's gone now (see
+    // setupStick's call site for the pill, further down).
     bindHoldButton(document.getElementById("tc-fire"), "Control");
 
     // Shared drag-tracking behind both touch sticks below: pointer capture,
@@ -1741,10 +1745,8 @@
     // center meant an off-center tap registered as an immediate partial
     // push in whatever direction the tap happened to land relative to
     // center, moving the character in a direction never intended.
-    // Treating the touch-down point itself as "center" (the same idea
-    // setupLookStickTap already uses to tell a tap from a drag, just
-    // applied here to the actual movement output) means a tap-and-hold
-    // in place always reads as zero deflection, and only deliberate
+    // Treating the touch-down point itself as "center" means a tap-and-
+    // hold in place always reads as zero deflection, and only deliberate
     // movement *away from where you first touched* produces any push.
     // xOnly (used by the look/turn control below): turning is a single
     // axis in the engine (assist_set_turn takes one value, never a Y),
@@ -1820,76 +1822,31 @@
       catch (e) { /* engine not ready yet */ }
     });
 
-    // Right stick: turn, and doubles as Fire -- but only for an actual
-    // tap, not a hold-to-turn. Confirmed unwanted: firing for the entire
-    // duration a hold is down (the original design, matching the old
-    // dedicated FIRE button's hold-to-fire behavior) burns ammo just from
-    // turning, since turning *is* holding the stick down.
+    // Right stick: turn only. It used to double as tap-to-fire (a plain
+    // touch dispatched Fire on release, unless the touch had moved far
+    // enough to count as a drag instead of a tap), but that's gone now
+    // that tc-fire is a dedicated Fire button -- no more drag-vs-tap
+    // threshold to get right, no more separate pointerdown/move/up
+    // listeners just to keep an incidental tap from also turning, and no
+    // more risk of a real drag's *release* accidentally firing a shot.
+    // Every deflection just turns; nothing here decides fire at all.
     //
-    // lookStickDragged (set by setupLookStickTap below) is the same
-    // "has this touch moved past the tap threshold" flag that decides
-    // whether release fires -- reused here so a tap doesn't *also* turn.
-    // Without this, setupStick's update() computes turn from distance to
-    // the stick's *center* starting on the very first pointerdown frame,
-    // so unless a tap landed on the exact center pixel (never), a plain
-    // tap-to-fire was also nudging the view a few degrees.
-    var lookStickDragged = false;
     // maxDist=27: the pill is 100px wide with a 46px knob, so the knob's
     // center has about 27px of travel to each side before it would push
     // past the track's rounded end -- matches the old stick's approach of
     // maxDist being "how far the knob can actually go", just recomputed
-    // for the new shape instead of reusing the circle's old 38.
+    // for the new shape instead of reusing the circle's old 38. The
+    // trailing `true` is xOnly (this control's only axis, see setupStick's
+    // own comment above) -- note it has to line up with xOnly's actual
+    // position in setupStick's parameter list; a still-simpler version of
+    // this call before tap-to-fire's removal had an onStart callback
+    // sitting where onEnd belongs, which silently shifted `true` one slot
+    // short of xOnly instead of into it.
     setupStick("tc-look-joystick", "tc-look-joystick-knob", 27, 6, function (dx) {
       if (typeof Module === "undefined" || !Module.ccall) return;
-      try { Module.ccall("assist_set_turn", null, ["number"], [lookStickDragged ? dx : 0]); }
+      try { Module.ccall("assist_set_turn", null, ["number"], [dx]); }
       catch (e) { /* engine not ready yet */ }
-    }, function onStart() {
-      // Runs before this pointerdown's first update()/onMove() above, so
-      // clearing the flag here (rather than in setupLookStickTap's own
-      // pointerdown handler below) guarantees a fresh touch never inherits
-      // "dragged" from the gesture before it, regardless of which of the
-      // two pointerdown listeners on this element happens to run first.
-      lookStickDragged = false;
-    }, true);
-
-    // Tap-to-fire, tracked independently of setupStick's own drag/deflection
-    // handling above -- a first attempt tried to reuse that deflection
-    // value (distance from the *stick's center*) to tell a tap from a
-    // drag, but that's wrong: unless your finger lands on the exact
-    // center pixel, which is normal to not do, it's already several
-    // pixels from center on the very first frame, before any real
-    // movement, so most taps were wrongly read as drags and never fired
-    // -- worse the closer to the edge you tapped, which is what made it
-    // feel location-dependent. This instead tracks distance from wherever
-    // *this touch itself* started, completely independent of the stick's
-    // center or visuals, so a tap fires reliably no matter where on the
-    // stick it lands.
-    (function setupLookStickTap() {
-      var el = document.getElementById("tc-look-joystick");
-      var TAP_MOVE_THRESHOLD = 16; // px moved from this touch's own start before it counts as a drag, not a tap
-      var pointerId = null, startX = 0, startY = 0;
-
-      el.addEventListener("pointerdown", function (e) {
-        pointerId = e.pointerId;
-        startX = e.clientX;
-        startY = e.clientY;
-        lookStickDragged = false;
-      });
-      window.addEventListener("pointermove", function (e) {
-        if (e.pointerId !== pointerId) return;
-        // Horizontal distance only, matching setupStick's own xOnly turn
-        // this control now uses -- a finger drifting vertically on the
-        // pill doesn't turn anything, so it shouldn't cancel the tap
-        // either.
-        var dx = e.clientX - startX;
-        if (Math.abs(dx) > TAP_MOVE_THRESHOLD) lookStickDragged = true;
-      });
-      window.addEventListener("pointerup", function (e) {
-        if (e.pointerId !== pointerId) return;
-        pointerId = null;
-        if (!lookStickDragged) tap("Control");
-      });
-    })();
+    }, null, null, true);
 
     // ---- Emscripten module wiring ----
     var statusElement = document.getElementById("status");
