@@ -549,6 +549,22 @@ EMSCRIPTEN_KEEPALIVE int assist_get_player_angle(void)
     return (int)(((double)players[consoleplayer].mo->angle / 4294967296.0) * 360.0);
 }
 
+// shell.html's multiplayer Host/Join flow needs to know when a level has
+// genuinely started, to know when it's safe to hide the pre-boot overlay
+// (see mpStartGame's waitForLevel path). assist_get_gamestate() ==
+// GS_LEVEL alone doesn't work for that: gamestate_t's GS_LEVEL is enum
+// value 0, the same value gamestate has by default before anything sets
+// it, so a game that's still blocked inside D_InitNetGame's
+// NET_WaitForLaunch (net_gui.c) waiting for a second player -- with no
+// level loaded yet at all -- reads as GS_LEVEL too. players[].mo is only
+// ever non-NULL once G_DoLoadLevel has actually spawned the local player,
+// which can't happen before that wait is over, so it doesn't share that
+// false-positive-at-zero problem.
+EMSCRIPTEN_KEEPALIVE int assist_get_player_has_spawned(void)
+{
+    return players[consoleplayer].mo != NULL;
+}
+
 // -----------------------------------------------------------------------
 // Startup
 // -----------------------------------------------------------------------

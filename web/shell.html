@@ -740,6 +740,7 @@
             <div class="mp-divider">— or play with someone else —</div>
             <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
             <div class="mp-code-display" id="mp-code-display" hidden></div>
+            <button class="assist-btn mp-btn" id="mp-copy-link" type="button" hidden>Copy Invite Link</button>
             <div class="mp-join-row">
               <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
               <button class="assist-btn mp-btn" id="mp-join" type="button">Join</button>
@@ -2144,6 +2145,7 @@
     var mpOverlay = document.getElementById("mp-overlay");
     var mpStatusEl = document.getElementById("mp-status");
     var mpCodeDisplayEl = document.getElementById("mp-code-display");
+    var mpCopyLinkBtn = document.getElementById("mp-copy-link");
     var mpJoinCodeInput = document.getElementById("mp-join-code");
     var mpSoloBtn = document.getElementById("mp-solo");
     var mpHostBtn = document.getElementById("mp-host");
@@ -2161,29 +2163,106 @@
       mpJoinCodeInput.disabled = busy;
     }
 
-    // Hides the overlay and hands the chosen args to Module.callMain --
-    // see Module.noInitialRun's comment above for why main() waits for
-    // this instead of running automatically. args is exactly what
-    // D_InitNetGame (engine/d_loop.c) parses as if it were typed on a
-    // command line: [] for solo, ["-server", "-nodes", "2"] to host,
-    // ["-connect", "peer"] to join -- see net_gui.c for what -nodes
-    // actually does (auto-launch once that many players have connected,
-    // no separate "start" button needed since Phase 1 is always exactly
-    // 2 players).
-    function mpStartGame(args) {
-      mpOverlay.hidden = true;
+    // A room code alone works fine (type it in, hit Join), but a link is
+    // easier to hand someone over chat/text. ?join=<code> is read back out
+    // below, at page load, purely to pre-fill the join field -- it never
+    // auto-connects on its own, so opening the link is exactly as
+    // deliberate an action as typing the code in by hand.
+    function mpInviteUrl(code) {
+      var url = new URL(location.href);
+      url.search = "";
+      url.hash = "";
+      url.searchParams.set("join", code);
+      return url.toString();
+    }
+
+    mpCopyLinkBtn.addEventListener("click", function () {
+      var url = mpInviteUrl(mpCodeDisplayEl.textContent);
+      navigator.clipboard.writeText(url).then(function () {
+        mpCopyLinkBtn.textContent = "Copied!";
+        setTimeout(function () { mpCopyLinkBtn.textContent = "Copy Invite Link"; }, 1500);
+      }).catch(function () {
+        // Clipboard access can be denied (permissions, insecure context,
+        // etc.) -- falling back to just showing the link is still better
+        // than a silently-failed button.
+        mpSetStatus("Couldn't copy automatically -- share this link: " + url);
+      });
+    });
+
+    // If this page was opened from a Copy Invite Link URL, pre-fill (but
+    // don't auto-submit) the join code -- see mpInviteUrl's comment above
+    // for why this stays a manual click rather than joining on its own.
+    (function mpPrefillJoinCodeFromUrl() {
+      var joinCode = new URL(location.href).searchParams.get("join");
+      if (joinCode) {
+        mpJoinCodeInput.value = joinCode.toUpperCase();
+        mpSetStatus("Invited to room " + joinCode.toUpperCase() + " -- click Join to connect.");
+      }
+    })();
+
+    // Hands the chosen args to Module.callMain -- see Module.noInitialRun's
+    // comment above for why main() waits for this instead of running
+    // automatically. args is exactly what D_InitNetGame (engine/d_loop.c)
+    // parses as if it were typed on a command line: [] for solo,
+    // ["-server", "-nodes", "2"] to host, ["-connect", "peer"] to join --
+    // see net_gui.c for what -nodes actually does (auto-launch once that
+    // many players have connected, no separate "start" button needed
+    // since Phase 1 is always exactly 2 players).
+    //
+    // waitForLevel controls when the overlay disappears. Solo drops
+    // straight into DOOM's own title/demo screen the instant main() runs,
+    // so hiding it immediately is correct there. Host and Join are
+    // different: main() immediately dives into D_InitNetGame's
+    // NET_WaitForLaunch (net_gui.c), which *blocks* -- via ASYNCIFY, not a
+    // real freeze -- until the second player connects. There is no title
+    // screen, no demo, nothing for the canvas to draw during that wait, so
+    // hiding the overlay (as this used to do unconditionally) left the
+    // player staring at a blank black canvas with the room code and
+    // "waiting" status gone right when they mattered most. So for those
+    // two paths the overlay -- code and status still visible -- stays up
+    // over the (blank) canvas until assist_get_gamestate actually reports
+    // GS_LEVEL, i.e. the level has genuinely started for both players.
+    function mpStartGame(args, waitForLevel) {
       Module.arguments = args;
       Module.callMain(args);
+
+      if (!waitForLevel) {
+        mpOverlay.hidden = true;
+        return;
+      }
+
+      // Deliberately NOT assist_get_gamestate() === GS_LEVEL here --
+      // GS_LEVEL is enum value 0, indistinguishable from gamestate's
+      // default zero value before anything has set it, so that check
+      // would pass instantly, before the second player has even
+      // connected. assist_get_player_has_spawned() (engine/assist.c) is
+      // false until G_DoLoadLevel actually spawns the local player, which
+      // can only happen once D_InitNetGame's NET_WaitForLaunch wait is
+      // over -- see that export's own comment for the full reasoning.
+      var pollId = setInterval(function () {
+        if (typeof Module === "undefined" || !Module.ccall) return;
+        var spawned;
+        try {
+          spawned = Module.ccall("assist_get_player_has_spawned", "number", [], []);
+        } catch (e) {
+          return; // not ready yet -- try again next tick
+        }
+        if (spawned) {
+          clearInterval(pollId);
+          mpOverlay.hidden = true;
+        }
+      }, 200);
     }
 
     mpSoloBtn.addEventListener("click", function () {
-      mpStartGame([]);
+      mpStartGame([], false);
     });
 
     mpHostBtn.addEventListener("click", function () {
       var code = mpGenerateRoomCode();
       mpCodeDisplayEl.textContent = code;
       mpCodeDisplayEl.hidden = false;
+      mpCopyLinkBtn.hidden = false;
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
@@ -2192,7 +2271,7 @@
       }).then(function (transport) {
         mpTransport = transport;
         mpSetStatus("Waiting for the other player to join...");
-        mpStartGame(["-server", "-nodes", "2"]);
+        mpStartGame(["-server", "-nodes", "2"], true);
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);
@@ -2213,7 +2292,8 @@
         return window.mpOpenTransport(url, code, mpDeliverPacket);
       }).then(function (transport) {
         mpTransport = transport;
-        mpStartGame(["-connect", "peer"]);
+        mpSetStatus("Connected -- starting game...");
+        mpStartGame(["-connect", "peer"], true);
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);
