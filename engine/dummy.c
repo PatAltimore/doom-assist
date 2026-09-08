@@ -21,11 +21,10 @@
 // real, but nothing in this translation unit ever defined them, so the
 // final link step failed with "undefined symbol" for all three.
 #include "doomfeatures.h"
-// net_gui.h just declares NET_WaitForLaunch's signature (see below) -- the
-// real net_gui.c (a text console "waiting for other players..." screen)
-// was never vendored, so this include exists purely to keep our stub's
-// prototype in sync with what d_loop.c expects to call.
-#include "net_gui.h"
+// Pulls in the real prototypes for the three stubs below, so a typo in
+// their signature here would be a compile error instead of a silent
+// mismatch only the linker (or nothing at all) would ever catch.
+#include "net_query.h"
 
 /*---------------------------------------------------------------------*
  *  local definitions                                                  *
@@ -94,17 +93,6 @@ void NET_Query_AddToMaster(net_addr_t *master_addr)
 // check that guards this call can itself never be true -- this stub exists
 // only so the *call site* still links, not because it can ever run.
 void NET_Query_MasterResponse(net_packet_t *packet)
-{
-}
-
-// d_loop.c's D_InitNetGame calls this right after a client successfully
-// connects to a server, to block until the server multicasts its "go"
-// message (real net_gui.c prints a console spinner while it waits). Our
-// relay-based transport (net_websockets.c) has no separate "waiting room"
-// step -- by the time NET_CL_Connect() returns, the server side has
-// already accepted us -- so there's nothing to wait for here; returning
-// immediately is the correct behavior, not a shortcut.
-void NET_WaitForLaunch(void)
 {
 }
 #endif
