@@ -541,6 +541,22 @@
       font-size: 16px;
     }
     .cheat-desc { font-size: 15px; color: var(--text-dim); margin: -4px 0 10px; line-height: 1.4; }
+    .cheat-checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+    }
+    .cheat-checkbox-label input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--red);
+      cursor: pointer;
+    }
     .map-wrap {
       background: #000;
       border: 2px solid;
@@ -821,6 +837,22 @@
           <button class="assist-btn" id="cheat-automap" title="Tab -- toggles DOOM's real automap.">Automap</button>
           <button class="assist-btn" id="cheat-mypos" title="IDMYPOS -- shows your exact coordinates and facing angle.">My Position</button>
         </div>
+        <!-- Not a typed cheat code like the buttons above -- vanilla DOOM
+             never had one for this (it was command-line-only, -nomonsters,
+             decided once for the whole session). It's also not something
+             that can apply mid-level: nomonsters (doomstat.h) is only
+             checked when a level's things first spawn (P_SpawnMapThing),
+             so this only takes effect the next time a level actually
+             *starts* -- warping below, or choosing New Game from the
+             title menu -- not on whatever level is running right now.
+             A checkbox reads better for that than a one-shot button. -->
+        <div class="cheat-row">
+          <label class="cheat-checkbox-label" for="cheat-nomonsters">
+            <input type="checkbox" id="cheat-nomonsters">
+            No Monsters (NoMo)
+          </label>
+        </div>
+        <p class="cheat-desc">Applies the next time a level starts -- warp below, or choose New Game from the title menu. Doesn't remove monsters already spawned in a level you're mid-way through.</p>
         <div class="cheat-row">
           <select class="assist-select" id="warp-level"></select>
           <button class="assist-btn" id="cheat-warp" title="IDCLEV -- warps straight to a map.">Warp</button>
@@ -1524,6 +1556,20 @@
       runCheat("idclev1" + map);
       toast("Warping to E1M" + map);
       logAction("cheat:warp", "Warped to E1M" + map, CHEAT_KEYS_LINK);
+    });
+    // Not runCheat/tap like the buttons above -- there's no keystroke
+    // sequence to type (see the HTML comment above this checkbox for why
+    // vanilla never had one). assist_set_nomonsters (assist.c) just parks
+    // the request for the *next* level start to pick up; there's nothing
+    // for the current level to react to right now, so no toast claiming
+    // an immediate effect.
+    document.getElementById("cheat-nomonsters").addEventListener("change", function (e) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_set_nomonsters", null, ["number"], [e.target.checked ? 1 : 0]); }
+      catch (err) { /* engine not ready yet */ }
+      logAction("cheat:nomonsters",
+        e.target.checked ? "Armed No Monsters for the next level start" : "Disarmed No Monsters",
+        [{ slug: "p-mobj-c", label: "Map objects" }]);
     });
 
     // ---- Pause / resume ----

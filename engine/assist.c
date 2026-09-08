@@ -162,6 +162,51 @@ EMSCRIPTEN_KEEPALIVE int assist_resume(void)
 }
 
 // -----------------------------------------------------------------------
+// No Monsters (NoMo)
+// -----------------------------------------------------------------------
+// `nomonsters` (doomstat.h) is a real vanilla-DOOM global -- P_SpawnMapThing
+// (p_mobj.c) already checks it and skips spawning a monster thing when
+// it's set. In the original DOS game it was command-line-only
+// (-nomonsters), decided once at startup, which is why there's no cht_
+// CheckCheat sequence for it in st_stuff.c the way there is for iddqd/
+// idkfa/idclev -- vanilla never needed one. It also only ever matters at
+// the moment a level *loads*: toggling it mid-level wouldn't retroactively
+// remove monsters already spawned.
+//
+// G_DoNewGame (g_game.c) unconditionally resets nomonsters to false for
+// every new game, since vanilla had no way to ask for it there -- the
+// command-line flag was global for the whole session, not a per-game
+// choice. assist_set_nomonsters just parks the browser's request in this
+// flag; the doom-assist patch in G_DoNewGame (see its own comment) reads
+// it at exactly the point vanilla would otherwise clear it. Since
+// doom-assist's Warp cheat (shell.html) already goes through the very
+// same G_DeferedInitNew -> ga_newgame -> G_DoNewGame path a real menu-
+// started game does, checking this box before Warping (or before
+// choosing New Game from the title menu) is all it takes -- no new
+// level-start plumbing needed here at all.
+static int assist_nomonsters_flag;
+
+EMSCRIPTEN_KEEPALIVE void assist_set_nomonsters(int on)
+{
+    assist_nomonsters_flag = on ? 1 : 0;
+}
+
+// Not EMSCRIPTEN_KEEPALIVE: called from C (the G_DoNewGame patch), not JS.
+int assist_nomonsters_requested(void)
+{
+    return assist_nomonsters_flag;
+}
+
+// Lets shell.html's checkbox reflect whether NoMo is actually in effect
+// for the level currently loaded (e.g. after a page refresh, or once the
+// requested level has actually started), rather than just echoing back
+// whatever it last set.
+EMSCRIPTEN_KEEPALIVE int assist_get_nomonsters(void)
+{
+    return nomonsters ? 1 : 0;
+}
+
+// -----------------------------------------------------------------------
 // Twin-stick touch controls
 // -----------------------------------------------------------------------
 // Two independent sticks (web/shell.html): a left one for movement

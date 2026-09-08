@@ -69,6 +69,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 void assist_apply_touch_controls(int *forward, int *side, short *angleturn); // assist.c
+int assist_nomonsters_requested(void); // assist.c -- see G_DoNewGame's own doom-assist patch below
 #endif
 
 #include "s_sound.h"
@@ -1763,7 +1764,18 @@ void G_DoNewGame (void)
     playeringame[1] = playeringame[2] = playeringame[3] = 0;
     respawnparm = false;
     fastparm = false;
+    // --- doom-assist patch: No Monsters (NoMo) cheat ---
+    // Vanilla always resets nomonsters here, since it was a whole-session
+    // command-line flag, not a per-game choice. The browser build lets
+    // shell.html's NoMo checkbox ask for it per game instead -- see
+    // assist_set_nomonsters/assist_nomonsters_requested's own comment in
+    // assist.c for why this is the one place that request needs to be
+    // re-applied.
+#ifdef __EMSCRIPTEN__
+    nomonsters = assist_nomonsters_requested() ? true : false;
+#else
     nomonsters = false;
+#endif
     consoleplayer = 0;
     G_InitNew (d_skill, d_episode, d_map); 
     gameaction = ga_nothing; 
