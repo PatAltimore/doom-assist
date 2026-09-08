@@ -84,6 +84,89 @@
       height: 100% !important;
       image-rendering: pixelated;
     }
+    /* Multiplayer (Phase 1) pre-boot screen -- see the JS section near
+       the bottom of this file for why this has to be a screen the player
+       sees *before* the game boots, not a button added once it's
+       running: D_ConnectNetGame's whole netgame-setup path only runs
+       once, driven by command-line-style args read at boot, so whether
+       this is a solo, hosted, or joined game has to be decided first.
+       Sized to sit exactly over the canvas (canvas-wrap is already
+       position:relative for this reason) so it reads as "the game hasn't
+       started yet" rather than a popup floating over gameplay. */
+    .mp-overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--stone-dark);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    /* Same author-rule-beats-UA-rule gotcha as #tc-play-group/#tc-menu-group
+       above -- .mp-overlay's own `display: flex` needs this explicit
+       override or setting .hidden on it (mpStartGame, in the JS further
+       down) does nothing and it stays visible on top of the game. */
+    .mp-overlay[hidden] { display: none; }
+    .mp-box {
+      max-width: 320px;
+      width: 100%;
+      text-align: center;
+    }
+    .mp-box h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      letter-spacing: 0.04em;
+      color: var(--white);
+    }
+    .mp-box p {
+      margin: 0 0 16px;
+      font-size: 16px;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+    .mp-btn { width: 100%; margin-bottom: 10px; }
+    .mp-divider {
+      font-size: 14px;
+      color: var(--text-dim);
+      margin: 4px 0 14px;
+    }
+    .mp-join-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    input.mp-input {
+      flex: 1;
+      min-width: 0;
+      background: var(--stone-dark);
+      color: var(--text);
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      padding: 7px;
+      font-family: inherit;
+      font-size: 16px;
+      text-transform: uppercase;
+      text-align: center;
+      letter-spacing: 0.08em;
+    }
+    .mp-join-row .mp-btn { width: auto; margin-bottom: 0; flex-shrink: 0; }
+    .mp-code-display {
+      font-size: 32px;
+      letter-spacing: 0.12em;
+      color: var(--white);
+      background: var(--stone-dark);
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+      padding: 6px;
+      margin-bottom: 12px;
+    }
+    .mp-status {
+      font-size: 15px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
     /* Game controls strip: below the canvas (not overlaid on top of it --
        an overlay partially obscures the 3D view, a strip underneath
        doesn't). The twin-stick/use row and the keyboard legend below are
@@ -644,6 +727,26 @@
       <progress id="progress" hidden max="100" value="0"></progress>
       <div class="canvas-wrap" id="canvas-wrap">
         <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1" width="640" height="400"></canvas>
+        <!-- Multiplayer (Phase 1) pre-boot screen -- see .mp-overlay's CSS
+             comment and the JS near the bottom of this file for why this
+             has to come before the game boots rather than being a button
+             added once it's running. Hidden once the player picks
+             something (mpStartGame in the JS below). -->
+        <div class="mp-overlay" id="mp-overlay">
+          <div class="mp-box">
+            <h2>MULTIPLAYER</h2>
+            <p>Play solo, or connect with one other player over the internet.</p>
+            <button class="assist-btn mp-btn" id="mp-solo" type="button">Play Solo</button>
+            <div class="mp-divider">— or play with someone else —</div>
+            <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
+            <div class="mp-code-display" id="mp-code-display" hidden></div>
+            <div class="mp-join-row">
+              <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
+              <button class="assist-btn mp-btn" id="mp-join" type="button">Join</button>
+            </div>
+            <div class="mp-status" id="mp-status" hidden></div>
+          </div>
+        </div>
       </div>
 
       <div class="game-controls" id="game-controls">
@@ -1838,6 +1941,17 @@
     var Module = {
       canvas: canvasElement,
       setStatus: setStatus,
+      // Emscripten normally calls main() itself the instant the WASM
+      // module finishes loading. That's wrong for this project now:
+      // main() is what runs D_ConnectNetGame, and whether that should be
+      // a solo game, a hosted room, or a joined one is a choice the
+      // player hasn't made yet at that point -- the mp-overlay screen
+      // below is still showing. Module.callMain(), called once the
+      // player picks something (see mpStartGame further down), starts
+      // main() manually instead. The WASM itself still downloads and
+      // compiles in the background the whole time the overlay is up, so
+      // this doesn't cost any load-time -- it just delays *running* it.
+      noInitialRun: true,
       totalDependencies: 0,
       monitorRunDependencies: function (left) {
         this.totalDependencies = Math.max(this.totalDependencies, left);
@@ -1861,6 +1975,250 @@
     window.onerror = function () {
       setStatus("Exception thrown, see JavaScript console");
     };
+
+    // -----------------------------------------------------------------
+    // Multiplayer (Phase 1): pre-boot Host/Join screen + the WebSocket
+    // relay bridge engine/net_websockets.c calls into.
+    //
+    // The big picture (see the multiplayer plan for the full research):
+    // real chocolate-doom's netcode (net_client.c/net_server.c, vendored
+    // verbatim) doesn't care HOW packets travel, only that something
+    // implements net_defs.h's net_module_t contract -- normally a real
+    // UDP socket (net_sdl.c), here net_websockets.c instead. That file
+    // can't open a WebSocket itself (browsers don't let C/WASM touch the
+    // network directly), so it calls out to two JS entry points this
+    // section defines: window.assistNetWsSend (outgoing) and
+    // Module.ccall("assist_net_ws_receive", ...) (incoming, called from
+    // here whenever a message arrives). Everything above net_websockets.c
+    // -- net_client.c, net_server.c, the lockstep tic machinery in
+    // g_game.c/d_loop.c -- has no idea any of this is happening; it just
+    // sees SendPacket/RecvPacket working, exactly as it would over a real
+    // network.
+    //
+    // Relay: Azure Web PubSub (see api/negotiate/index.js for the token
+    // issuance this depends on, and Microsoft's json.webpubsub.azure.v1
+    // subprotocol reference for the exact message shapes used below).
+    // Each room is one Web PubSub *group*; Phase 1 caps a room at exactly
+    // 2 players, so "publish to the group" and "send to the other
+    // player" are the same thing -- there's no true unicast available
+    // from a client connection anyway (that needs a server-side REST
+    // call), so net_websockets.c's `to` argument (the destination peer-id
+    // it would address a real send to) is intentionally ignored below.
+    //
+    // Addressing on the receive side uses a fixed placeholder "peer"
+    // string for every incoming packet, for the same reason: with only
+    // ever one other possible party in a Phase 1 room, net_websockets.c's
+    // address-table lookups don't need real per-connection identity to
+    // behave correctly, just *some* string both this client's -connect
+    // argument and every inbound assist_net_ws_receive call agree on
+    // consistently (see net_websockets.c's own comments on this).
+
+    var MP_ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I -- easy to misread when read aloud or typed on mobile
+    var MP_ROOM_CODE_LENGTH = 5;
+
+    function mpGenerateRoomCode() {
+      var code = "";
+      for (var i = 0; i < MP_ROOM_CODE_LENGTH; i++) {
+        code += MP_ROOM_CODE_ALPHABET[Math.floor(Math.random() * MP_ROOM_CODE_ALPHABET.length)];
+      }
+      return code;
+    }
+
+    function mpBytesToBase64(bytes) {
+      var binary = "";
+      for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary);
+    }
+
+    function mpBase64ToBytes(b64) {
+      var binary = atob(b64);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+
+    // Asks api/negotiate for a Web PubSub client access URL scoped to
+    // just this one room. Exposed on window (rather than a plain local
+    // function) so it can be swapped out from the console/devtools for
+    // local testing without a real Azure Web PubSub instance deployed --
+    // see the multiplayer plan's verification steps.
+    window.mpNegotiate = function (roomCode) {
+      return fetch("/api/negotiate?group=" + encodeURIComponent(roomCode)).then(function (res) {
+        if (!res.ok) {
+          throw new Error("Couldn't reach the multiplayer relay (HTTP " + res.status + ")");
+        }
+        return res.json();
+      }).then(function (data) {
+        return data.url;
+      });
+    };
+
+    // Opens the actual WebSocket to Azure Web PubSub and joins the given
+    // room's group. Resolves once joining actually succeeds (not just
+    // once the socket opens) -- so mpStartGame below only ever boots the
+    // engine after the room is genuinely ready to carry packets. Also
+    // exposed on window for the same local-testing reason as mpNegotiate
+    // above.
+    window.mpOpenTransport = function (clientUrl, roomCode, onReceive) {
+      return new Promise(function (resolve, reject) {
+        var ws = new WebSocket(clientUrl, "json.webpubsub.azure.v1");
+        var settled = false;
+
+        ws.onopen = function () {
+          ws.send(JSON.stringify({ type: "joinGroup", group: roomCode, ackId: 1 }));
+        };
+
+        ws.onmessage = function (evt) {
+          var msg;
+          try {
+            msg = JSON.parse(evt.data);
+          } catch (e) {
+            return;
+          }
+
+          if (msg.type === "ack" && msg.ackId === 1) {
+            settled = true;
+            if (msg.success) {
+              resolve({
+                send: function (bytes) {
+                  if (ws.readyState !== WebSocket.OPEN) return;
+                  ws.send(JSON.stringify({
+                    type: "sendToGroup",
+                    group: roomCode,
+                    dataType: "binary",
+                    // We're the only two members of this group -- there's
+                    // no reason to also receive our own broadcast back.
+                    noEcho: true,
+                    data: mpBytesToBase64(bytes)
+                  }));
+                },
+                close: function () { ws.close(); }
+              });
+            } else {
+              reject(new Error((msg.error && msg.error.message) || "The relay rejected joining this room"));
+            }
+            return;
+          }
+
+          if (msg.type === "message" && msg.from === "group" && msg.dataType === "binary") {
+            onReceive(mpBase64ToBytes(msg.data));
+          }
+        };
+
+        ws.onerror = function () {
+          if (!settled) { settled = true; reject(new Error("Connection to the relay failed")); }
+        };
+        ws.onclose = function (evt) {
+          if (!settled) { settled = true; reject(new Error("Connection to the relay closed (code " + evt.code + ")")); }
+        };
+      });
+    };
+
+    // Set once Host/Join successfully opens a transport -- this is what
+    // window.assistNetWsSend actually calls through to. null the rest of
+    // the time (solo play never touches any of this).
+    var mpTransport = null;
+
+    // The C->JS half of net_websockets.c's bridge (see NET_WS_SendPacket's
+    // EM_JS call). `to` is intentionally unused -- see the file-level
+    // comment above for why a group broadcast already *is* the correct
+    // send-to-the-other-player behavior for a 2-player Phase 1 room.
+    window.assistNetWsSend = function (to, bytes) {
+      if (mpTransport) mpTransport.send(bytes);
+    };
+
+    // The JS->C half: hands one incoming packet to
+    // assist_net_ws_receive's queue (engine/net_websockets.c), the same
+    // way this file's touch-control code already calls into other
+    // assist_* exports via Module.ccall. "peer" is the fixed placeholder
+    // address discussed in the file-level comment above.
+    function mpDeliverPacket(bytes) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try {
+        Module.ccall("assist_net_ws_receive", null, ["string", "array", "number"], ["peer", bytes, bytes.length]);
+      } catch (e) {
+        console.error("assist_net_ws_receive failed:", e);
+      }
+    }
+
+    var mpOverlay = document.getElementById("mp-overlay");
+    var mpStatusEl = document.getElementById("mp-status");
+    var mpCodeDisplayEl = document.getElementById("mp-code-display");
+    var mpJoinCodeInput = document.getElementById("mp-join-code");
+    var mpSoloBtn = document.getElementById("mp-solo");
+    var mpHostBtn = document.getElementById("mp-host");
+    var mpJoinBtn = document.getElementById("mp-join");
+
+    function mpSetStatus(text) {
+      mpStatusEl.textContent = text;
+      mpStatusEl.hidden = !text;
+    }
+
+    function mpSetBusy(busy) {
+      mpSoloBtn.disabled = busy;
+      mpHostBtn.disabled = busy;
+      mpJoinBtn.disabled = busy;
+      mpJoinCodeInput.disabled = busy;
+    }
+
+    // Hides the overlay and hands the chosen args to Module.callMain --
+    // see Module.noInitialRun's comment above for why main() waits for
+    // this instead of running automatically. args is exactly what
+    // D_InitNetGame (engine/d_loop.c) parses as if it were typed on a
+    // command line: [] for solo, ["-server", "-nodes", "2"] to host,
+    // ["-connect", "peer"] to join -- see net_gui.c for what -nodes
+    // actually does (auto-launch once that many players have connected,
+    // no separate "start" button needed since Phase 1 is always exactly
+    // 2 players).
+    function mpStartGame(args) {
+      mpOverlay.hidden = true;
+      Module.arguments = args;
+      Module.callMain(args);
+    }
+
+    mpSoloBtn.addEventListener("click", function () {
+      mpStartGame([]);
+    });
+
+    mpHostBtn.addEventListener("click", function () {
+      var code = mpGenerateRoomCode();
+      mpCodeDisplayEl.textContent = code;
+      mpCodeDisplayEl.hidden = false;
+      mpSetBusy(true);
+      mpSetStatus("Connecting...");
+
+      window.mpNegotiate(code).then(function (url) {
+        return window.mpOpenTransport(url, code, mpDeliverPacket);
+      }).then(function (transport) {
+        mpTransport = transport;
+        mpSetStatus("Waiting for the other player to join...");
+        mpStartGame(["-server", "-nodes", "2"]);
+      }).catch(function (err) {
+        mpSetStatus("Error: " + err.message);
+        mpSetBusy(false);
+      });
+    });
+
+    mpJoinBtn.addEventListener("click", function () {
+      var code = (mpJoinCodeInput.value || "").trim().toUpperCase();
+      if (!code) {
+        mpSetStatus("Enter a room code first.");
+        return;
+      }
+
+      mpSetBusy(true);
+      mpSetStatus("Connecting...");
+
+      window.mpNegotiate(code).then(function (url) {
+        return window.mpOpenTransport(url, code, mpDeliverPacket);
+      }).then(function (transport) {
+        mpTransport = transport;
+        mpStartGame(["-connect", "peer"]);
+      }).catch(function (err) {
+        mpSetStatus("Error: " + err.message);
+        mpSetBusy(false);
+      });
+    });
   </script>
   {{{ SCRIPT }}}
 </body>

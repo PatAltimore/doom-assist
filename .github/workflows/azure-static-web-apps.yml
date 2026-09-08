@@ -54,9 +54,15 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: upload
           app_location: dist
+          # api/negotiate (Phase 1 multiplayer's token-issuing function --
+          # see api/negotiate/index.js) deploys as an SWA "managed
+          # function" from here. skip_api_build is left at its default
+          # (false) so the deploy action runs `npm install` for api/'s one
+          # dependency (@azure/web-pubsub) -- there's no separate build
+          # step needed since it's plain CommonJS, not TypeScript/bundled.
+          api_location: api
           output_location: ""
           skip_app_build: true
-          skip_api_build: true
 
   close_pull_request:
     if: github.event_name == 'pull_request' && github.event.action == 'closed'

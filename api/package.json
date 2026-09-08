@@ -1,0 +1,9 @@
+{
+  "name": "doom-assist-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "doom-assist's only server-side piece: mints room-scoped Azure Web PubSub tokens for Phase 1 multiplayer. See api/negotiate/index.js.",
+  "dependencies": {
+    "@azure/web-pubsub": "^1.1.2"
+  }
+}
