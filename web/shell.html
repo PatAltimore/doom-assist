@@ -98,7 +98,19 @@
       inset: 0;
       background: var(--stone-dark);
       display: flex;
-      align-items: center;
+      /* align-items: flex-start, not center: this box's content isn't a
+         fixed size -- once a code and status text show up it gets
+         taller, and on a short mobile canvas (the overlay is confined to
+         canvas-wrap's own bounds, which can be under 200px tall in
+         portrait) it can end up taller than the overlay itself. A
+         centered flex item that overflows its scrollable container
+         starts clipped equally off both the top AND bottom instead of
+         being cleanly scrollable from a sane starting point -- that's
+         what "the join code is overlaid on top of some of the UI" was:
+         not a z-index problem, an overflow-while-centered one. Top-aligned
+         content that merely scrolls further down when it needs to has no
+         such failure mode. */
+      align-items: flex-start;
       justify-content: center;
       padding: 16px;
       overflow-y: auto;
@@ -108,10 +120,24 @@
        override or setting .hidden on it (mpStartGame, in the JS further
        down) does nothing and it stays visible on top of the game. */
     .mp-overlay[hidden] { display: none; }
+    /* canvas-wrap sets line-height: 0 to stop the canvas's own default
+       inline line-height from adding phantom space below it -- a fix for
+       a canvas-only problem, not meant to apply beyond it. Since
+       line-height inherits, and .mp-overlay/.mp-box live *inside*
+       canvas-wrap, every line of real text in this whole multiplayer
+       screen was inheriting line-height: 0 too, collapsing each text
+       element's line box down to ~0 height while the glyphs themselves
+       still painted at full size -- which is what actually produced "the
+       join code is overlaid on top of some of the UI": adjacent
+       elements' zero-height boxes sat almost on top of each other, so
+       their text visually overlapped. This one property reset is the
+       real fix; the align-items and mp-choice-collapsing changes here
+       just stop it from also needing to *scroll*. */
     .mp-box {
       max-width: 320px;
       width: 100%;
       text-align: center;
+      line-height: normal;
     }
     .mp-box h2 {
       margin: 0 0 8px;
@@ -735,16 +761,31 @@
         <div class="mp-overlay" id="mp-overlay">
           <div class="mp-box">
             <h2>MULTIPLAYER</h2>
-            <p>Play solo, or connect with one other player over the internet.</p>
-            <button class="assist-btn mp-btn" id="mp-solo" type="button">Play Solo</button>
-            <div class="mp-divider">— or play with someone else —</div>
-            <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
-            <div class="mp-code-display" id="mp-code-display" hidden></div>
-            <button class="assist-btn mp-btn" id="mp-copy-link" type="button" hidden>Copy Invite Link</button>
-            <div class="mp-join-row">
-              <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
-              <button class="assist-btn mp-btn" id="mp-join" type="button">Join</button>
+            <!-- Everything the player doesn't need anymore once they've
+                 picked Solo/Host/Join lives in here, so it can be hidden
+                 in one shot (mpCommitToChoice, in the JS below) instead
+                 of staying on screen competing for space with the
+                 code/status below -- the other reason a short mobile
+                 canvas could overflow, on top of the align-items fix in
+                 .mp-overlay's own CSS comment. -->
+            <div id="mp-choice">
+              <p>Play solo, or connect with one other player over the internet.</p>
+              <button class="assist-btn mp-btn" id="mp-solo" type="button">Play Solo</button>
+              <div class="mp-divider">— or play with someone else —</div>
+              <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
+              <div class="mp-join-row">
+                <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
+                <button class="assist-btn mp-btn" id="mp-join" type="button">Join</button>
+              </div>
             </div>
+            <div class="mp-code-display" id="mp-code-display" hidden></div>
+            <!-- navigator.share, where available (most mobile browsers),
+                 hands off to the OS share sheet -- Messages, Mail,
+                 WhatsApp, copy, whatever the player already has -- rather
+                 than only ever being able to copy. See mpShareBtn's own
+                 handler for the desktop fallback where navigator.share
+                 doesn't exist. -->
+            <button class="assist-btn mp-btn" id="mp-share" type="button" hidden>Share Invite</button>
             <div class="mp-status" id="mp-status" hidden></div>
           </div>
         </div>
@@ -2143,9 +2184,10 @@
     }
 
     var mpOverlay = document.getElementById("mp-overlay");
+    var mpChoiceEl = document.getElementById("mp-choice");
     var mpStatusEl = document.getElementById("mp-status");
     var mpCodeDisplayEl = document.getElementById("mp-code-display");
-    var mpCopyLinkBtn = document.getElementById("mp-copy-link");
+    var mpShareBtn = document.getElementById("mp-share");
     var mpJoinCodeInput = document.getElementById("mp-join-code");
     var mpSoloBtn = document.getElementById("mp-solo");
     var mpHostBtn = document.getElementById("mp-host");
@@ -2163,6 +2205,14 @@
       mpJoinCodeInput.disabled = busy;
     }
 
+    // Once the player has picked Solo/Host/Join there's no reason for the
+    // *other* options (or the intro paragraph explaining them) to still
+    // be taking up space -- see mp-choice's own HTML comment for why that
+    // also matters for not overflowing a short mobile canvas.
+    function mpCommitToChoice() {
+      mpChoiceEl.hidden = true;
+    }
+
     // A room code alone works fine (type it in, hit Join), but a link is
     // easier to hand someone over chat/text. ?join=<code> is read back out
     // below, at page load, purely to pre-fill the join field -- it never
@@ -2176,20 +2226,43 @@
       return url.toString();
     }
 
-    mpCopyLinkBtn.addEventListener("click", function () {
-      var url = mpInviteUrl(mpCodeDisplayEl.textContent);
-      navigator.clipboard.writeText(url).then(function () {
-        mpCopyLinkBtn.textContent = "Copied!";
-        setTimeout(function () { mpCopyLinkBtn.textContent = "Copy Invite Link"; }, 1500);
-      }).catch(function () {
-        // Clipboard access can be denied (permissions, insecure context,
-        // etc.) -- falling back to just showing the link is still better
-        // than a silently-failed button.
-        mpSetStatus("Couldn't copy automatically -- share this link: " + url);
-      });
+    mpShareBtn.addEventListener("click", function () {
+      var code = mpCodeDisplayEl.textContent;
+      var url = mpInviteUrl(code);
+
+      // navigator.share hands off to the OS's own share sheet -- Messages,
+      // Mail, WhatsApp, "Copy", whatever the player already has installed
+      // -- which is what actually answers "email, text, or copy" in one
+      // button instead of a copy-only action. It's not available on every
+      // browser (desktop Chrome/Firefox notably still don't have it), so
+      // this falls back to a plain clipboard copy, and then to just
+      // displaying the link, rather than the button silently doing
+      // nothing on those.
+      if (navigator.share) {
+        navigator.share({
+          title: "Join my DOOM game",
+          text: "Join my DOOM multiplayer game -- room code " + code,
+          url: url
+        }).catch(function (err) {
+          // The share sheet's own "Cancel" rejects with AbortError -- that's
+          // the player changing their mind, not a failure worth reporting.
+          if (err && err.name !== "AbortError") {
+            mpSetStatus("Couldn't open the share sheet -- copy this link: " + url);
+          }
+        });
+      } else if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(function () {
+          mpShareBtn.textContent = "Copied!";
+          setTimeout(function () { mpShareBtn.textContent = "Share Invite"; }, 1500);
+        }).catch(function () {
+          mpSetStatus("Couldn't copy automatically -- share this link: " + url);
+        });
+      } else {
+        mpSetStatus("Share this link: " + url);
+      }
     });
 
-    // If this page was opened from a Copy Invite Link URL, pre-fill (but
+    // If this page was opened from a Share Invite URL, pre-fill (but
     // don't auto-submit) the join code -- see mpInviteUrl's comment above
     // for why this stays a manual click rather than joining on its own.
     (function mpPrefillJoinCodeFromUrl() {
@@ -2260,9 +2333,10 @@
 
     mpHostBtn.addEventListener("click", function () {
       var code = mpGenerateRoomCode();
+      mpCommitToChoice();
       mpCodeDisplayEl.textContent = code;
       mpCodeDisplayEl.hidden = false;
-      mpCopyLinkBtn.hidden = false;
+      mpShareBtn.hidden = false;
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
@@ -2275,6 +2349,12 @@
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);
+        // Negotiate/transport failures are recoverable -- put the
+        // Solo/Host/Join choice back so the player can just try again
+        // instead of being stuck looking at a dead code + status line.
+        mpChoiceEl.hidden = false;
+        mpCodeDisplayEl.hidden = true;
+        mpShareBtn.hidden = true;
       });
     });
 
@@ -2285,6 +2365,7 @@
         return;
       }
 
+      mpCommitToChoice();
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
@@ -2297,6 +2378,7 @@
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);
+        mpChoiceEl.hidden = false; // see the matching comment in mpHostBtn's handler
       });
     });
   </script>
