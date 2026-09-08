@@ -28,8 +28,18 @@
 #undef FEATURE_DEHACKED
 
 // Enables multiplayer support (network games)
+//
+// doom-assist patch: enabled for __EMSCRIPTEN__ -- see net_websockets.c
+// for the transport this build uses instead of a real UDP socket, and
+// d_loop.c's own doom-assist patches for the other two things enabling
+// this alone doesn't cover (net_sdl_module -> net_websockets_module, and
+// un-guarding D_StartNetGame's real negotiation body).
 
+#ifdef __EMSCRIPTEN__
+#define FEATURE_MULTIPLAYER
+#else
 #undef FEATURE_MULTIPLAYER
+#endif
 
 // Enables sound output
 

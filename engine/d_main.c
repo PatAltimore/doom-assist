@@ -1178,64 +1178,17 @@ void D_DoomMain (void)
     DEH_printf("Z_Init: Init zone memory allocation daemon. \n");
     Z_Init ();
 
-#ifdef FEATURE_MULTIPLAYER
-    //!
-    // @category net
-    //
-    // Start a dedicated server, routing packets but not participating
-    // in the game itself.
-    //
-
-    if (M_CheckParm("-dedicated") > 0)
-    {
-        printf("Dedicated server mode.\n");
-        NET_DedicatedServer();
-
-        // Never returns
-    }
-
-    //!
-    // @category net
-    //
-    // Query the Internet master server for a global list of active
-    // servers.
-    //
-
-    if (M_CheckParm("-search"))
-    {
-        NET_MasterQuery();
-        exit(0);
-    }
-
-    //!
-    // @arg <address>
-    // @category net
-    //
-    // Query the status of the server running on the given IP
-    // address.
-    //
-
-    p = M_CheckParmWithArgs("-query", 1);
-
-    if (p)
-    {
-        NET_QueryAddress(myargv[p+1]);
-        exit(0);
-    }
-
-    //!
-    // @category net
-    //
-    // Search the local LAN for running servers.
-    //
-
-    if (M_CheckParm("-localsearch"))
-    {
-        NET_LANQuery();
-        exit(0);
-    }
-
-#endif
+    // --- doom-assist patch ---
+    // Real chocolate-doom gates -dedicated/-search/-query/-localsearch
+    // here behind FEATURE_MULTIPLAYER -- a standalone dedicated-server
+    // process and internet master-server discovery, all built on
+    // net_dedicated.c/net_query.c. Neither file was vendored: there's no
+    // separate always-on relay-hosting process in this design (the
+    // "host" is just one of the players' own browser tabs, via the
+    // loopback-server pattern in D_InitNetGame), and rooms are joined by
+    // a code shared out of band, not discovered via a public server
+    // list. Removed rather than stubbed, same reasoning as the
+    // -autojoin branch dropped in d_loop.c's D_InitNetGame.
 
     //!
     // @vanilla

@@ -37,7 +37,18 @@
 #include "net_io.h"
 #include "net_query.h"
 #include "net_server.h"
-#include "net_sdl.h"
+// --- doom-assist patch: multiplayer over a WebSocket relay ---
+// Real chocolate-doom fills net_module_t (the "how do packets actually
+// travel" interface, see net_websockets.c's own file-level comment) with
+// net_sdl.c, a real UDP socket. Browsers can't open raw UDP sockets, so
+// this build uses net_websockets.c instead -- everywhere below that used
+// to say net_sdl_module now says net_websockets_module. Nothing else in
+// this file's logic changes: it's still driven by the same -server/
+// -connect command-line-style flags (see D_InitNetGame below), just
+// passed in via Module.arguments from shell.html instead of a real
+// command line -- see doomgeneric_emscripten.c's main() and Emscripten's
+// own Module.arguments convention for how that substitution works.
+#include "net_websockets.h"
 #include "net_loop.h"
 
 // The complete set of data for a particular tic.
@@ -307,7 +318,16 @@ void D_StartGameLoop(void)
     lasttime = GetAdjustedTime() / ticdup;
 }
 
-#if ORIGCODE
+// --- doom-assist patch: real net negotiation for __EMSCRIPTEN__ only ---
+// ORIGCODE (config.h) is doomgeneric's blanket "restore code stripped for
+// portability" switch -- it gates 50+ unrelated things across 14 files
+// (CD audio, joystick calibration, DOS-era stat dumps...), so flipping it
+// globally to reach the real body of D_StartNetGame below would resurrect
+// all of that too and likely break this build in unrelated ways. This
+// adds __EMSCRIPTEN__ as its own, separate way in to just the one block
+// that actually needs it, leaving the global ORIGCODE switch exactly as
+// doomgeneric left it everywhere else.
+#if ORIGCODE || defined(__EMSCRIPTEN__)
 //
 // Block until the game start message is received from the server.
 //
@@ -340,7 +360,9 @@ static void BlockUntilStart(net_gamesettings_t *settings,
 void D_StartNetGame(net_gamesettings_t *settings,
                     netgame_startup_callback_t callback)
 {
-#if ORIGCODE
+// See the doom-assist patch comment above BlockUntilStart -- same
+// __EMSCRIPTEN__ carve-out, not the global ORIGCODE switch.
+#if ORIGCODE || defined(__EMSCRIPTEN__)
     int i;
 
     offsetms = 0;
@@ -476,7 +498,13 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
     {
         NET_SV_Init();
         NET_SV_AddModule(&net_loop_server_module);
-        NET_SV_AddModule(&net_sdl_module);
+        NET_SV_AddModule(&net_websockets_module);
+        // Safe to still call as-is: dummy.c's doom-assist patch stubs the
+        // master-server query functions this calls into to always report
+        // "no master server", so this quietly does nothing -- there's no
+        // public server browser for a relay-hosted room shared by code,
+        // matching -privateserver's real intent without needing that
+        // flag specifically.
         NET_SV_RegisterWithMaster();
 
         net_loop_client_module.InitClient();
@@ -484,24 +512,14 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
     }
     else
     {
-        //!
-        // @category net
-        //
-        // Automatically search the local LAN for a multiplayer
-        // server and join it.
-        //
-
-        i = M_CheckParm("-autojoin");
-
-        if (i > 0)
-        {
-            addr = NET_FindLANServer();
-
-            if (addr == NULL)
-            {
-                I_Error("No server found on local LAN");
-            }
-        }
+        // --- doom-assist patch ---
+        // Real chocolate-doom also supports -autojoin (broadcast on the
+        // LAN and connect to whatever answers, via net_query.c). There's
+        // no LAN to broadcast on from a browser tab and no server to
+        // discover that way -- every room here is joined by an explicit
+        // code shared out of band -- so that branch (and the net_query.c
+        // dependency it would otherwise pull in for nothing) is dropped
+        // rather than stubbed.
 
         //!
         // @arg <address>
@@ -515,8 +533,8 @@ boolean D_InitNetGame(net_connect_data_t *connect_data)
 
         if (i > 0)
         {
-            net_sdl_module.InitClient();
-            addr = net_sdl_module.ResolveAddress(myargv[i+1]);
+            net_websockets_module.InitClient();
+            addr = net_websockets_module.ResolveAddress(myargv[i+1]);
 
             if (addr == NULL)
             {
