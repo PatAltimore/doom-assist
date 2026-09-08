@@ -23,15 +23,12 @@
 // engine already does the interesting parts, so this file mostly just
 // plumbs data through.
 
-#include <stdio.h>
 #include <string.h>
 #include <limits.h>
 #include <emscripten.h>
 
 #include "doomdef.h"    // gamestate_t, GS_LEVEL, ML_MAPPED/ML_DONTDRAW
 #include "doomstat.h"   // gameepisode, gamemap, paused, gamestate, players[]
-#include "g_game.h"      // G_SaveGame, G_LoadGame
-#include "p_saveg.h"     // P_SaveGameFile -- builds the on-disk save filename
 #include "r_state.h"     // numlines, lines[], numsectors, sectors[]
 #include "p_mobj.h"      // mobj_t, mobjinfo_t
 #include "p_local.h"     // thinkercap, P_MobjThinker -- for walking live things (keys)
@@ -110,55 +107,6 @@ EMSCRIPTEN_KEEPALIVE void assist_toggle_pause(void)
 {
     extern boolean sendpause; // g_game.c
     sendpause = true;
-}
-
-// -----------------------------------------------------------------------
-// Autosave / resume
-// -----------------------------------------------------------------------
-// Reserve save slot 8 (the last of vanilla DOOM's 8 save slots, 0-7) for
-// the browser's autosave, so it never collides with a slot the player
-// might use from the real in-game Save menu.
-#define ASSIST_SAVE_SLOT 7
-#define ASSIST_SAVE_DESC "Browser Autosave"
-
-// G_SaveGame/G_LoadGame (g_game.c) don't write/read immediately -- they
-// just record what to do and set a flag that G_Ticker acts on during the
-// *next* game tic, exactly like the real Save/Load Game menu triggers
-// them (see m_menu.c). Reusing them means the on-disk format always
-// matches what the game's own Load Game screen expects, instead of this
-// file needing to know DOOM's save format itself.
-EMSCRIPTEN_KEEPALIVE int assist_has_autosave(void)
-{
-    FILE *f = fopen(P_SaveGameFile(ASSIST_SAVE_SLOT), "rb");
-    if (!f)
-        return 0;
-    fclose(f);
-    return 1;
-}
-
-// Only meaningful mid-level (GS_LEVEL) -- calling G_SaveGame from the
-// title screen or an intermission would queue a save of a game that
-// isn't actually in progress.
-EMSCRIPTEN_KEEPALIVE int assist_autosave(void)
-{
-    if (gamestate != GS_LEVEL)
-        return 0;
-    G_SaveGame(ASSIST_SAVE_SLOT, ASSIST_SAVE_DESC);
-    return 1;
-}
-
-// The "Resume" button (shell.html) calls this directly rather than
-// synthesizing a Load Game menu keypress sequence the way wolf3d-assist's
-// Resume button has to. DOOM's G_LoadGame is already just a plain
-// function taking a filename -- there's no menu state machine to drive
-// through, so there's nothing to gain from pretending to click through
-// menus a player never sees.
-EMSCRIPTEN_KEEPALIVE int assist_resume(void)
-{
-    if (!assist_has_autosave())
-        return 0;
-    G_LoadGame(P_SaveGameFile(ASSIST_SAVE_SLOT));
-    return 1;
 }
 
 // -----------------------------------------------------------------------
