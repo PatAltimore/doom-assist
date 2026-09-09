@@ -2350,6 +2350,28 @@
       mpStatusEl.hidden = !text;
     }
 
+    // Same as mpSetStatus, but for the "here's the invite link" fallback
+    // messages -- a real <a> element instead of plain text, so the link
+    // is actually clickable on our own page even when the share sheet or
+    // clipboard write it was trying to avoid needing didn't work. Built
+    // with DOM calls rather than an innerHTML string, since url always
+    // comes from mpInviteUrl (this project's own room-code URL, never
+    // anything from outside), but plain text otherwise: no reason to
+    // introduce an HTML-injection footgun into a status line for what
+    // will only ever hold a small set of fixed prefixes.
+    function mpSetStatusLink(prefixText, url) {
+      mpStatusEl.textContent = "";
+      mpStatusEl.appendChild(document.createTextNode(prefixText + " "));
+      var a = document.createElement("a");
+      a.href = url;
+      a.textContent = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.style.color = "inherit";
+      mpStatusEl.appendChild(a);
+      mpStatusEl.hidden = false;
+    }
+
     function mpSetBusy(busy) {
       mpSoloBtn.disabled = busy;
       mpHostBtn.disabled = busy;
@@ -2390,27 +2412,45 @@
       // this falls back to a plain clipboard copy, and then to just
       // displaying the link, rather than the button silently doing
       // nothing on those.
+      //
+      // Deliberately no "text" field alongside "url": most Web Share
+      // implementations only have one plain-text body to hand the target
+      // app (Android's underlying share intent has a single EXTRA_TEXT),
+      // so given both, they get concatenated into one string -- and a
+      // URL sitting inside a longer string doesn't reliably get
+      // recognized as a link by every target's own compose view (some
+      // email/SMS compose fields only auto-link a URL that arrives on
+      // its own). A URL-only share is far more likely to be treated
+      // *as* a link -- e.g. iOS shows a real link preview card for it --
+      // rather than as prose that happens to contain one.
       if (navigator.share) {
         navigator.share({
           title: "Join my DOOM game",
-          text: "Join my DOOM multiplayer game -- room code " + code,
           url: url
         }).catch(function (err) {
           // The share sheet's own "Cancel" rejects with AbortError -- that's
           // the player changing their mind, not a failure worth reporting.
           if (err && err.name !== "AbortError") {
-            mpSetStatus("Couldn't open the share sheet -- copy this link: " + url);
+            mpSetStatusLink("Couldn't open the share sheet -- copy this link:", url);
           }
         });
-      } else if (navigator.clipboard) {
-        navigator.clipboard.writeText(url).then(function () {
-          mpShareBtn.textContent = "Copied!";
-          setTimeout(function () { mpShareBtn.textContent = "Share Invite"; }, 1500);
-        }).catch(function () {
-          mpSetStatus("Couldn't copy automatically -- share this link: " + url);
-        });
       } else {
-        mpSetStatus("Share this link: " + url);
+        // No native share sheet (desktop Chrome/Firefox, as of this
+        // writing) -- mailto: is the closest desktop equivalent: the one
+        // mechanism that gives both a real Subject line and a link the
+        // recipient's mail client will auto-linkify once the email is
+        // sent/viewed, neither of which a bare clipboard copy could
+        // offer (there's no "subject" field in a plain clipboard
+        // string). Still copies the plain link to the clipboard too,
+        // quietly -- no toast of its own -- so it's available to paste
+        // elsewhere if the player closes the compose window without
+        // sending, e.g. to paste into a chat app instead.
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(url).catch(function () {});
+        }
+        var subject = encodeURIComponent("Join my DOOM game");
+        var body = encodeURIComponent("Join my DOOM multiplayer game -- click the link below to connect:\n\n" + url);
+        location.href = "mailto:?subject=" + subject + "&body=" + body;
       }
     });
 
@@ -2450,6 +2490,31 @@
     // two paths the overlay -- code and status still visible -- stays up
     // over the (blank) canvas until assist_get_gamestate actually reports
     // GS_LEVEL, i.e. the level has genuinely started for both players.
+    // Mobile browsers throttle -- and can fully suspend -- a background
+    // tab's JS execution, including the timer chain NET_WaitForLaunch's
+    // emscripten_sleep(100) loop depends on to keep polling for the
+    // other player. Sharing the invite link (mpShareBtn's own handler,
+    // above) switches away to a different app on a phone -- exactly the
+    // scenario that triggers this -- so a host who shares right after
+    // hosting can come back to find nothing has happened yet, even
+    // though the other player already connected while they were away.
+    // Nothing is actually lost in that case (the WebSocket stays open
+    // and whatever arrived is queued; see net_websockets.c's own queue),
+    // it's only delayed -- returning to this tab lets the browser's
+    // normal timer scheduling catch back up. This listener just makes
+    // that catching-up visible instead of silent, so it doesn't read as
+    // permanently stuck. See mpStartGame's own call site below for when
+    // it's actually wired up (only while still waiting).
+    var mpHostWaiting = false; // true only for the host's own wait, not the joiner's much shorter "Connecting..." window
+    function mpNudgeOnVisible() {
+      if (document.visibilityState !== "visible" || !mpHostWaiting) return;
+      mpSetStatus("Waiting for the other player to join... reconnecting...");
+      setTimeout(function () {
+        if (mpHostWaiting) mpSetStatus("Waiting for the other player to join...");
+      }, 1500);
+    }
+    document.addEventListener("visibilitychange", mpNudgeOnVisible);
+
     function mpStartGame(args, waitForLevel) {
       Module.arguments = args;
       Module.callMain(args);
@@ -2477,6 +2542,7 @@
         }
         if (spawned) {
           clearInterval(pollId);
+          mpHostWaiting = false;
           mpOverlay.hidden = true;
         }
       }, 200);
@@ -2515,10 +2581,12 @@
       }).then(function (transport) {
         mpTransport = transport;
         mpSetStatus("Waiting for the other player to join...");
+        mpHostWaiting = true; // see mpNudgeOnVisible's own comment above
         mpStartGame(hostArgs, true);
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);
+        mpHostWaiting = false;
         // Negotiate/transport failures are recoverable -- put the
         // Solo/Host/Join choice back so the player can just try again
         // instead of being stuck looking at a dead code + status line.
