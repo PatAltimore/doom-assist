@@ -37,6 +37,12 @@
 #include "net_io.h"
 #include "net_query.h"
 #include "net_server.h"
+// doom-assist patch: see D_Disconnected below and assist_net_status's
+// comment in assist.c -- same forward-declare-inline pattern as
+// g_game.c's own assist_apply_touch_controls.
+#ifdef __EMSCRIPTEN__
+void assist_net_status(const char *message); // assist.c
+#endif
 // --- doom-assist patch: multiplayer over a WebSocket relay ---
 // Real chocolate-doom fills net_module_t (the "how do packets actually
 // travel" interface, see net_websockets.c's own file-level comment) with
@@ -272,6 +278,15 @@ static void D_Disconnected(void)
     // disconnected from server
 
     printf("Disconnected from server.\n");
+
+#ifdef __EMSCRIPTEN__
+    // doom-assist patch: this is how a joiner's own browser tab learns
+    // the host disappeared -- unlike the host learning a joiner timed
+    // out (net_client.c's own doom-assist patch), this fires when this
+    // client's *own* connection is gone, not a remote peer's -- see
+    // assist_net_status's comment in assist.c.
+    assist_net_status("Disconnected from server.");
+#endif
 }
 
 //

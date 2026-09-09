@@ -139,24 +139,29 @@
       text-align: center;
       line-height: normal;
     }
-    .mp-box h2 {
-      margin: 0 0 8px;
-      font-size: 24px;
+    /* A section heading for the multiplayer options below it, not the
+       whole screen's title -- see mp-choice's own HTML comment for why
+       Solo (right above this) doesn't get one. The top margin is what
+       actually separates it from Solo's button now that there's no
+       divider line doing that job. */
+    .mp-section-heading {
+      margin: 10px 0 6px;
+      font-size: 20px;
       letter-spacing: 0.04em;
       color: var(--white);
     }
     .mp-box p {
-      margin: 0 0 16px;
-      font-size: 16px;
+      margin: 0 0 10px;
+      font-size: 15px;
       color: var(--text-dim);
       line-height: 1.4;
     }
     .mp-btn { width: 100%; margin-bottom: 10px; }
-    .mp-divider {
-      font-size: 14px;
-      color: var(--text-dim);
-      margin: 4px 0 14px;
-    }
+    /* .cheat-checkbox-label (reused as-is below) is display:flex, so
+       .mp-box's own text-align: center has no effect on it -- needs its
+       own centering, plus a bottom margin none of the cheats-tab uses
+       need since they're followed by more checkboxes, not a button. */
+    .mp-checkbox-label { justify-content: center; margin-bottom: 10px; font-size: 15px; }
     .mp-join-row {
       display: flex;
       gap: 6px;
@@ -760,18 +765,35 @@
              something (mpStartGame in the JS below). -->
         <div class="mp-overlay" id="mp-overlay">
           <div class="mp-box">
-            <h2>MULTIPLAYER</h2>
             <!-- Everything the player doesn't need anymore once they've
                  picked Solo/Host/Join lives in here, so it can be hidden
                  in one shot (mpCommitToChoice, in the JS below) instead
                  of staying on screen competing for space with the
                  code/status below -- the other reason a short mobile
                  canvas could overflow, on top of the align-items fix in
-                 .mp-overlay's own CSS comment. -->
+                 .mp-overlay's own CSS comment.
+
+                 Solo comes first with no heading of its own -- it's the
+                 default, one-tap path and needs no explaining. The
+                 "MULTIPLAYER" heading only labels the section that
+                 actually needs a heading: it used to sit above Solo too,
+                 mislabeling a single-player option as if it were part of
+                 multiplayer, as well as costing a line of vertical space
+                 a short mobile canvas couldn't spare. -->
             <div id="mp-choice">
-              <p>Play solo, or connect with one other player over the internet.</p>
               <button class="assist-btn mp-btn" id="mp-solo" type="button">Play Solo</button>
-              <div class="mp-divider">— or play with someone else —</div>
+              <h2 class="mp-section-heading">MULTIPLAYER</h2>
+              <p>Play with one other player over the internet.</p>
+              <!-- Deathmatch is a host-side-only choice: real chocolate-doom
+                   (d_net.c's SaveGameSettings/LoadGameSettings) already
+                   negotiates it from whoever's running the server down to
+                   every client during game start, so the joiner doesn't
+                   need -- or get -- a checkbox of their own; whatever the
+                   host picks here is what both players end up in. -->
+              <label class="cheat-checkbox-label mp-checkbox-label" for="mp-deathmatch">
+                <input type="checkbox" id="mp-deathmatch">
+                Deathmatch (instead of co-op)
+              </label>
               <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
               <div class="mp-join-row">
                 <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
@@ -1497,12 +1519,12 @@
 
     // ---- Toast ----
     var toastTimer = null;
-    function toast(msg) {
+    function toast(msg, duration) {
       var t = document.getElementById("toast");
       t.textContent = msg;
       t.classList.add("show");
       clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { t.classList.remove("show"); }, 1600);
+      toastTimer = setTimeout(function () { t.classList.remove("show"); }, duration || 1600);
     }
 
     // ---- Synthetic keyboard bridge into the SDL2/Emscripten engine ----
@@ -2183,6 +2205,31 @@
       }
     }
 
+    // Surfaces the engine's own disconnect handling (assist_net_status,
+    // called from the doom-assist patches in net_client.c/d_loop.c) as an
+    // on-screen toast -- without this, a dropped connection is invisible
+    // until DOOM's 30-second timeout (net_common.c's
+    // CONNECTION_TIMEOUT_LEN) resolves it one way or the other, and
+    // during that wait the game just looks frozen with no explanation.
+    // Runs unconditionally, including in solo play: assist_net_status is
+    // never called there (both call sites are netgame-only code paths),
+    // so this is a harmless no-op poll rather than something that needs
+    // gating on which mode was chosen.
+    var mpLastStatusSeq = 0;
+    setInterval(function () {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      var seq;
+      try {
+        seq = Module.ccall("assist_get_net_status_seq", "number", [], []);
+      } catch (e) {
+        return; // not ready yet
+      }
+      if (seq === mpLastStatusSeq) return;
+      mpLastStatusSeq = seq;
+      var msg = Module.ccall("assist_get_net_status_message", "string", [], []);
+      toast(msg, 4000); // longer than the default 1600ms -- this matters more than "God mode toggled"
+    }, 500);
+
     var mpOverlay = document.getElementById("mp-overlay");
     var mpChoiceEl = document.getElementById("mp-choice");
     var mpStatusEl = document.getElementById("mp-status");
@@ -2333,6 +2380,13 @@
 
     mpHostBtn.addEventListener("click", function () {
       var code = mpGenerateRoomCode();
+      // Real chocolate-doom's own -deathmatch flag (d_main.c) -- see the
+      // HTML comment on this checkbox for why only the host needs to
+      // pass it; d_net.c negotiates it down to the joiner automatically.
+      var deathmatch = document.getElementById("mp-deathmatch").checked;
+      var hostArgs = ["-server", "-nodes", "2"];
+      if (deathmatch) hostArgs.push("-deathmatch");
+
       mpCommitToChoice();
       mpCodeDisplayEl.textContent = code;
       mpCodeDisplayEl.hidden = false;
@@ -2345,7 +2399,7 @@
       }).then(function (transport) {
         mpTransport = transport;
         mpSetStatus("Waiting for the other player to join...");
-        mpStartGame(["-server", "-nodes", "2"], true);
+        mpStartGame(hostArgs, true);
       }).catch(function (err) {
         mpSetStatus("Error: " + err.message);
         mpSetBusy(false);

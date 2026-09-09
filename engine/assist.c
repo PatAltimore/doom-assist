@@ -32,6 +32,7 @@
 #include "r_state.h"     // numlines, lines[], numsectors, sectors[]
 #include "p_mobj.h"      // mobj_t, mobjinfo_t
 #include "p_local.h"     // thinkercap, P_MobjThinker -- for walking live things (keys)
+#include "m_misc.h"      // M_StringCopy -- assist_net_status
 
 // -----------------------------------------------------------------------
 // Level / progress readers
@@ -563,6 +564,45 @@ EMSCRIPTEN_KEEPALIVE int assist_get_player_angle(void)
 EMSCRIPTEN_KEEPALIVE int assist_get_player_has_spawned(void)
 {
     return players[consoleplayer].mo != NULL;
+}
+
+// -----------------------------------------------------------------------
+// Multiplayer connection status
+// -----------------------------------------------------------------------
+// Real chocolate-doom already notices both halves of a dropped connection
+// on its own -- a remote player timing out (net_server.c's
+// NET_SV_CheckDeadlock, broadcast to every client including the host
+// itself via its own loopback connection) and losing the connection to
+// the server entirely (d_loop.c's D_Disconnected) -- but both just
+// printf() to a console no one in a browser tab ever sees. These two
+// functions are called from doom-assist patches at each of those two
+// spots (net_client.c's NET_CL_ParseConsoleMessage, d_loop.c's
+// D_Disconnected) to capture the latest one as a short string
+// shell.html can poll and show as an on-screen banner instead.
+//
+// A sequence number, not just the message itself, is exported alongside
+// it so shell.html can tell "a new disconnect just happened" apart from
+// "the same one is still the last thing that happened" -- without it,
+// polling the message string alone would have no way to avoid re-showing
+// the same banner forever, or missing a second one with identical text.
+#define ASSIST_NET_STATUS_MAX 128
+static char assist_net_status_buf[ASSIST_NET_STATUS_MAX];
+static int assist_net_status_seq = 0;
+
+void assist_net_status(const char *message)
+{
+    M_StringCopy(assist_net_status_buf, message, sizeof(assist_net_status_buf));
+    ++assist_net_status_seq;
+}
+
+EMSCRIPTEN_KEEPALIVE int assist_get_net_status_seq(void)
+{
+    return assist_net_status_seq;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *assist_get_net_status_message(void)
+{
+    return assist_net_status_buf;
 }
 
 // -----------------------------------------------------------------------

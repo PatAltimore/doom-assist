@@ -38,6 +38,15 @@
 #include "net_server.h"
 #include "net_structrw.h"
 #include "w_checksum.h"
+
+// doom-assist patch: surfaces server console messages (see
+// NET_CL_ParseConsoleMessage below) to shell.html as an on-screen banner
+// -- see assist_net_status's own comment in assist.c for the full
+// reasoning, same forward-declare-inline pattern as g_game.c's own
+// assist_apply_touch_controls/assist_nomonsters_requested.
+#ifdef __EMSCRIPTEN__
+void assist_net_status(const char *message); // assist.c
+#endif
 #include "w_wad.h"
 
 extern void D_ReceiveTic(ticcmd_t *ticcmds, boolean *playeringame);
@@ -805,6 +814,15 @@ static void NET_CL_ParseConsoleMessage(net_packet_t *packet)
     printf("Message from server: ");
 
     NET_SafePuts(msg);
+
+#ifdef __EMSCRIPTEN__
+    // doom-assist patch: this is how the host's own browser tab learns a
+    // remote joiner timed out (net_server.c's NET_SV_CheckDeadlock
+    // broadcasts that as a console message, which reaches the host too,
+    // via its own loopback client connection to its own server) -- see
+    // assist_net_status's comment in assist.c.
+    assist_net_status(msg);
+#endif
 }
 
 // parse a received packet
