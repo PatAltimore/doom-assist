@@ -2056,7 +2056,22 @@
           if (err) console.error("Autosave: IndexedDB read failed", err);
           Module.removeRunDependency("assist-idbfs-init");
         });
-      }]
+      }],
+      // Fires once the WASM has compiled and the runtime is actually
+      // ready for ccall/callMain -- independent of noInitialRun, which
+      // only ever affected whether *main()* gets called automatically,
+      // not when the runtime itself becomes usable. mpWaitForModuleReady
+      // (further down, in the multiplayer section) is what actually
+      // consumes this -- see its own comment for why it exists: a
+      // same-browser click has always happened well after this fires in
+      // practice, but auto-joining from a shared link (mpJoinRoom) can
+      // run this whole flow within a second of the page loading, with no
+      // guarantee the module has finished compiling yet.
+      onRuntimeInitialized: function () {
+        mpModuleReady = true;
+        mpModuleReadyResolvers.forEach(function (resolve) { resolve(); });
+        mpModuleReadyResolvers = [];
+      }
     };
     setStatus("Downloading...");
     window.onerror = function () {
@@ -2206,6 +2221,21 @@
     // the time (solo play never touches any of this).
     var mpTransport = null;
 
+    // See Module.onRuntimeInitialized's own comment above for why this
+    // exists: mpStartGame's Module.callMain must never run before the
+    // WASM has actually finished compiling. A manually-clicked Host/Join
+    // has always happened well after that in practice (the player has to
+    // notice the button first), but mpJoinRoom below can also run within
+    // a second of the page itself loading -- straight off a shared
+    // invite link, before there's been any time for the module to be
+    // ready yet.
+    var mpModuleReady = false;
+    var mpModuleReadyResolvers = [];
+    function mpWaitForModuleReady() {
+      if (mpModuleReady) return Promise.resolve();
+      return new Promise(function (resolve) { mpModuleReadyResolvers.push(resolve); });
+    }
+
     // The C->JS half of net_websockets.c's bridge (see NET_WS_SendPacket's
     // EM_JS call). `to` is intentionally unused -- see the file-level
     // comment above for why a group broadcast already *is* the correct
@@ -2334,14 +2364,17 @@
       }
     });
 
-    // If this page was opened from a Share Invite URL, pre-fill (but
-    // don't auto-submit) the join code -- see mpInviteUrl's comment above
-    // for why this stays a manual click rather than joining on its own.
-    (function mpPrefillJoinCodeFromUrl() {
+    // If this page was opened from a Share Invite URL, join that room
+    // immediately -- no click needed. mpJoinRoom is a function
+    // declaration (hoisted), so calling it here, before its own definition
+    // further down, still works: the whole script has finished defining
+    // every top-level function by the time anything in it actually runs.
+    (function mpAutoJoinFromUrl() {
       var joinCode = new URL(location.href).searchParams.get("join");
       if (joinCode) {
-        mpJoinCodeInput.value = joinCode.toUpperCase();
-        mpSetStatus("Invited to room " + joinCode.toUpperCase() + " -- click Join to connect.");
+        joinCode = joinCode.toUpperCase();
+        mpJoinCodeInput.value = joinCode; // kept in sync for the error-recovery path -- see mpJoinRoom's catch
+        mpJoinRoom(joinCode);
       }
     })();
 
@@ -2445,21 +2478,27 @@
       });
     });
 
-    mpJoinBtn.addEventListener("click", function () {
-      var code = (mpJoinCodeInput.value || "").trim().toUpperCase();
-      if (!code) {
-        mpSetStatus("Enter a room code first.");
-        return;
-      }
-
+    // Shared by the Join button and mpAutoJoinFromUrl below (an invite
+    // link auto-joins without a click -- see that function's own
+    // comment). Negotiate/transport-open start immediately regardless of
+    // whether the WASM has finished compiling yet -- there's no reason
+    // to make either wait on the other -- but mpStartGame's
+    // Module.callMain absolutely cannot run before the module is ready,
+    // which a fresh page load (the auto-join path) has no guarantee of
+    // within any particular timeframe. mpWaitForModuleReady's own comment
+    // has the full reasoning.
+    function mpJoinRoom(code) {
       mpCommitToChoice();
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
-      window.mpNegotiate(code).then(function (url) {
-        return window.mpOpenTransport(url, code, mpDeliverPacket);
-      }).then(function (transport) {
-        mpTransport = transport;
+      Promise.all([
+        window.mpNegotiate(code).then(function (url) {
+          return window.mpOpenTransport(url, code, mpDeliverPacket);
+        }),
+        mpWaitForModuleReady()
+      ]).then(function (results) {
+        mpTransport = results[0];
         mpSetStatus("Connected -- starting game...");
         mpStartGame(["-connect", "peer"], true);
       }).catch(function (err) {
@@ -2467,6 +2506,16 @@
         mpSetBusy(false);
         mpChoiceEl.hidden = false; // see the matching comment in mpHostBtn's handler
       });
+    }
+
+    mpJoinBtn.addEventListener("click", function () {
+      var code = (mpJoinCodeInput.value || "").trim().toUpperCase();
+      if (!code) {
+        mpSetStatus("Enter a room code first.");
+        return;
+      }
+
+      mpJoinRoom(code);
     });
   </script>
   {{{ SCRIPT }}}
