@@ -162,6 +162,10 @@
        own centering, plus a bottom margin none of the cheats-tab uses
        need since they're followed by more checkboxes, not a button. */
     .mp-checkbox-label { justify-content: center; margin-bottom: 10px; font-size: 15px; }
+    /* .cheat-row (reused as-is) is also display:flex, same centering gap
+       as .cheat-checkbox-label above. */
+    .mp-level-row { justify-content: center; margin-bottom: 10px; }
+    .mp-level-row label { font-size: 15px; color: var(--text-dim); }
     .mp-join-row {
       display: flex;
       gap: 6px;
@@ -794,6 +798,20 @@
                 <input type="checkbox" id="mp-deathmatch">
                 Deathmatch (instead of co-op)
               </label>
+              <!-- Level is a host-side-only choice too, same reasoning as
+                   the deathmatch checkbox above -- d_net.c negotiates
+                   startepisode/startmap down to the joiner the same way
+                   it does deathmatch, so there's nothing for the joiner
+                   to pick. Populated from the same E1M1-E1M9 list as the
+                   Cheats tab's own warp-level select (see the JS below --
+                   shareware only ever has episode 1). Real DOOM's
+                   -warp flag defaults to E1M1 when omitted, which is why
+                   every game before this always started there regardless
+                   of deathmatch/co-op. -->
+              <div class="cheat-row mp-level-row">
+                <label for="mp-level">Level:</label>
+                <select class="assist-select" id="mp-level"></select>
+              </div>
               <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
               <div class="mp-join-row">
                 <input class="mp-input" id="mp-join-code" type="text" placeholder="ROOM CODE" maxlength="8" autocapitalize="characters" autocomplete="off">
@@ -1269,16 +1287,21 @@
       if (e.target.closest(".code-link") && !knownPaused) sendTogglePause();
     });
 
-    // ---- Warp target picker (Cheats tab) ----
-    // Shareware doom1.wad only has episode 1 (E1M1-E1M9) -- IDCLEV rejects
-    // any other episode number outright when gamemode == shareware (see
-    // the cht_CheckCheat handling in st_stuff.c), so there's no "episode"
-    // selector here, just the map number.
-    var warpSelect = document.getElementById("warp-level");
-    for (var i = 1; i <= 9; i++) {
-      var o1 = document.createElement("option"); o1.value = i; o1.textContent = "E1M" + i;
-      warpSelect.appendChild(o1);
+    // ---- Map pickers (Cheats tab's warp, and the multiplayer Host
+    // screen's level select) ----
+    // Shareware doom1.wad only has episode 1 (E1M1-E1M9) -- IDCLEV
+    // rejects any other episode number outright when gamemode ==
+    // shareware (see the cht_CheckCheat handling in st_stuff.c), and
+    // -warp defaults to episode 1 when only given a map number, so
+    // neither picker needs an "episode" selector, just the map number.
+    function populateE1MapSelect(selectEl) {
+      for (var i = 1; i <= 9; i++) {
+        var o = document.createElement("option"); o.value = i; o.textContent = "E1M" + i;
+        selectEl.appendChild(o);
+      }
     }
+    var warpSelect = document.getElementById("warp-level");
+    populateE1MapSelect(warpSelect);
 
     function renderHint(lvl) {
       var h = HINTS.find(function (x) { return x.level === lvl; });
@@ -2239,6 +2262,8 @@
     var mpSoloBtn = document.getElementById("mp-solo");
     var mpHostBtn = document.getElementById("mp-host");
     var mpJoinBtn = document.getElementById("mp-join");
+    var mpLevelSelect = document.getElementById("mp-level");
+    populateE1MapSelect(mpLevelSelect); // see that function's own comment, near warp-level above
 
     function mpSetStatus(text) {
       mpStatusEl.textContent = text;
@@ -2384,7 +2409,15 @@
       // HTML comment on this checkbox for why only the host needs to
       // pass it; d_net.c negotiates it down to the joiner automatically.
       var deathmatch = document.getElementById("mp-deathmatch").checked;
-      var hostArgs = ["-server", "-nodes", "2"];
+      // -warp takes episode then map for a non-commercial IWAD (d_main.c:
+      // "startepisode = myargv[p+1]...startmap = myargv[p+2]...") --
+      // shareware doom1.wad is always episode 1, but that first argument
+      // still has to be passed explicitly. Passing just the map number
+      // (as this originally did) gets parsed as episode <mapnum> instead,
+      // which doesn't exist in a shareware IWAD and hung the whole
+      // netgame handshake rather than failing cleanly -- caught by
+      // testing an actual level pick (E1M5), not by reading the code.
+      var hostArgs = ["-server", "-nodes", "2", "-warp", "1", mpLevelSelect.value];
       if (deathmatch) hostArgs.push("-deathmatch");
 
       mpCommitToChoice();
