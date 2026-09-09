@@ -2315,11 +2315,24 @@
         });
       }
 
+      // reconnecting covers the whole negotiate-then-connect chain, not
+      // just the backoff wait beforehand -- found by testing, not by
+      // inspection: a visibilitychange firing while a negotiate call was
+      // already in flight (reconnectTimer already cleared, since that
+      // happens the instant the timer fires, well before the async call
+      // it kicks off resolves) slipped past a guard that only checked
+      // reconnectTimer, starting a second, overlapping reconnect attempt
+      // -- two live sockets briefly both joined to the same group.
+      var reconnecting = false;
       function scheduleReconnect() {
-        if (reconnectTimer) return; // already retrying
+        if (reconnectTimer || reconnecting) return; // already retrying, either waiting or in flight
         reconnectTimer = setTimeout(function () {
           reconnectTimer = null;
-          window.mpNegotiate(roomCode).then(connect).catch(function () {
+          reconnecting = true;
+          window.mpNegotiate(roomCode).then(connect).then(function () {
+            reconnecting = false;
+          }).catch(function () {
+            reconnecting = false;
             reconnectDelayMs = Math.min(reconnectDelayMs * 2, 10000);
             scheduleReconnect();
           });
