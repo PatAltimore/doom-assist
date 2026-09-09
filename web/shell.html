@@ -195,6 +195,29 @@
     .mp-mode-btn.active { background: var(--red); color: var(--white); }
     .mp-mode-btn:not(.active):hover { background: var(--stone); color: var(--text); }
     .mp-level-select { flex-shrink: 0; padding: 0 4px; }
+    /* Same bevel-bordered segmented look as .mp-mode-toggle above (three
+       equal segments instead of two), for the same "chunky button UI"
+       consistency reason. */
+    .mp-share-row {
+      display: flex;
+      margin-bottom: 10px;
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+    }
+    .mp-share-btn {
+      flex: 1;
+      background: var(--red);
+      color: var(--white);
+      border: none;
+      padding: 8px 4px;
+      font-family: inherit;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+    }
+    .mp-share-btn + .mp-share-btn { border-left: 2px solid var(--bevel-dark); }
+    .mp-share-btn:hover { background: var(--red-bright); }
     .mp-join-row {
       display: flex;
       gap: 6px;
@@ -851,13 +874,20 @@
               </div>
             </div>
             <div class="mp-code-display" id="mp-code-display" hidden></div>
-            <!-- navigator.share, where available (most mobile browsers),
-                 hands off to the OS share sheet -- Messages, Mail,
-                 WhatsApp, copy, whatever the player already has -- rather
-                 than only ever being able to copy. See mpShareBtn's own
-                 handler for the desktop fallback where navigator.share
-                 doesn't exist. -->
-            <button class="assist-btn mp-btn" id="mp-share" type="button" hidden>Share Invite</button>
+            <!-- Deliberately not navigator.share(): two real phone tests
+                 (see the JS comment above these buttons) showed the OS
+                 share sheet's "Mail"/"Messages" targets not reliably
+                 giving a real subject line or a distinctly clickable
+                 link -- Web Share only has a generic title/text/url the
+                 target app decides how to use, and that mapping isn't
+                 consistent enough across mail/SMS apps to depend on.
+                 mailto:/sms: links give full, guaranteed control over
+                 exactly what subject and body show up instead. -->
+            <div class="mp-share-row" id="mp-share-row" hidden>
+              <button type="button" class="mp-share-btn" id="mp-share-email">Email</button>
+              <button type="button" class="mp-share-btn" id="mp-share-text">Text</button>
+              <button type="button" class="mp-share-btn" id="mp-share-copy">Copy</button>
+            </div>
             <div class="mp-status" id="mp-status" hidden></div>
           </div>
         </div>
@@ -2193,57 +2223,128 @@
     // engine after the room is genuinely ready to carry packets. Also
     // exposed on window for the same local-testing reason as mpNegotiate
     // above.
+    // A real, confirmed field failure, not a hypothetical: hosting, then
+    // switching apps to share the invite link, left the joiner
+    // permanently stuck even after returning to the host tab -- not just
+    // delayed, as background-tab *timer* throttling alone would produce.
+    // The actual cause is more drastic: mobile OSes can fully close a
+    // backgrounded tab's WebSocket outright (iOS Safari in particular is
+    // known to do this quickly once a different app takes over), and
+    // Web PubSub has no replay for group messages sent while a
+    // connection was down -- so without reconnection logic, whichever
+    // side's socket got closed is deaf to everything that happened while
+    // it was gone, forever, no matter how long it waits afterward.
+    //
+    // The fix has two parts: reconnect automatically (re-negotiate a
+    // fresh token and rejoin the same group -- the old token may itself
+    // have expired during a long backgrounding), and retry immediately
+    // when the tab regains visibility rather than only on whatever
+    // backoff timer happens to be running, since that's exactly the
+    // moment the OS is most likely to actually let a new connection
+    // through. Once reconnected, chocolate-doom's own reliable-packet
+    // retransmission (net_common.c) takes over from there -- a joiner
+    // that never got acknowledged keeps resending on its own, so it
+    // still completes the handshake once the host is actually listening
+    // again, without needing anything replayed from before.
     window.mpOpenTransport = function (clientUrl, roomCode, onReceive) {
-      return new Promise(function (resolve, reject) {
-        var ws = new WebSocket(clientUrl, "json.webpubsub.azure.v1");
-        var settled = false;
+      var ws = null;
+      var intentionalClose = false;
+      var reconnectTimer = null;
+      var reconnectDelayMs = 1000;
 
-        ws.onopen = function () {
-          ws.send(JSON.stringify({ type: "joinGroup", group: roomCode, ackId: 1 }));
-        };
+      function connect(url) {
+        return new Promise(function (resolve, reject) {
+          var socket = new WebSocket(url, "json.webpubsub.azure.v1");
+          var settled = false;
 
-        ws.onmessage = function (evt) {
-          var msg;
-          try {
-            msg = JSON.parse(evt.data);
-          } catch (e) {
-            return;
-          }
+          socket.onopen = function () {
+            socket.send(JSON.stringify({ type: "joinGroup", group: roomCode, ackId: 1 }));
+          };
 
-          if (msg.type === "ack" && msg.ackId === 1) {
-            settled = true;
-            if (msg.success) {
-              resolve({
-                send: function (bytes) {
-                  if (ws.readyState !== WebSocket.OPEN) return;
-                  ws.send(JSON.stringify({
-                    type: "sendToGroup",
-                    group: roomCode,
-                    dataType: "binary",
-                    // We're the only two members of this group -- there's
-                    // no reason to also receive our own broadcast back.
-                    noEcho: true,
-                    data: mpBytesToBase64(bytes)
-                  }));
-                },
-                close: function () { ws.close(); }
-              });
-            } else {
-              reject(new Error((msg.error && msg.error.message) || "The relay rejected joining this room"));
+          socket.onmessage = function (evt) {
+            var msg;
+            try {
+              msg = JSON.parse(evt.data);
+            } catch (e) {
+              return;
             }
-            return;
-          }
 
-          if (msg.type === "message" && msg.from === "group" && msg.dataType === "binary") {
-            onReceive(mpBase64ToBytes(msg.data));
-          }
-        };
+            if (msg.type === "ack" && msg.ackId === 1) {
+              settled = true;
+              if (msg.success) {
+                ws = socket;
+                reconnectDelayMs = 1000; // back to the front of the line once we're actually connected again
+                resolve();
+              } else {
+                reject(new Error((msg.error && msg.error.message) || "The relay rejected joining this room"));
+              }
+              return;
+            }
 
-        ws.onerror = function () {
-          if (!settled) { settled = true; reject(new Error("Connection to the relay failed")); }
-        };
-        ws.onclose = function (evt) {
-          if (!settled) { settled = true; reject(new Error("Connection to the relay closed (code " + evt.code + ")")); }
+            if (msg.type === "message" && msg.from === "group" && msg.dataType === "binary") {
+              onReceive(mpBase64ToBytes(msg.data));
+            }
+          };
+
+          socket.onerror = function () {
+            if (!settled) { settled = true; reject(new Error("Connection to the relay failed")); }
+          };
+          socket.onclose = function (evt) {
+            if (!settled) {
+              settled = true;
+              reject(new Error("Connection to the relay closed (code " + evt.code + ")"));
+              return;
+            }
+            // Past the initial handshake now -- this is an *unexpected*
+            // drop of an already-working connection, not a failed first
+            // attempt. See this function's own file-level comment above
+            // for why reconnecting here matters so much more than it
+            // would for a typical web app.
+            if (!intentionalClose) scheduleReconnect();
+          };
+        });
+      }
+
+      function scheduleReconnect() {
+        if (reconnectTimer) return; // already retrying
+        reconnectTimer = setTimeout(function () {
+          reconnectTimer = null;
+          window.mpNegotiate(roomCode).then(connect).catch(function () {
+            reconnectDelayMs = Math.min(reconnectDelayMs * 2, 10000);
+            scheduleReconnect();
+          });
+        }, reconnectDelayMs);
+      }
+
+      // See this function's file-level comment above for why visibility
+      // regained is worth an immediate retry rather than waiting for
+      // whatever point the backoff timer happens to be at.
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible" && ws && ws.readyState !== WebSocket.OPEN) {
+          if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+          scheduleReconnect();
+        }
+      });
+
+      return connect(clientUrl).then(function () {
+        return {
+          send: function (bytes) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+              type: "sendToGroup",
+              group: roomCode,
+              dataType: "binary",
+              // We're the only two members of this group -- there's no
+              // reason to also receive our own broadcast back.
+              noEcho: true,
+              data: mpBytesToBase64(bytes)
+            }));
+          },
+          close: function () {
+            intentionalClose = true;
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            if (ws) ws.close();
+          }
         };
       });
     };
@@ -2319,7 +2420,10 @@
     var mpChoiceEl = document.getElementById("mp-choice");
     var mpStatusEl = document.getElementById("mp-status");
     var mpCodeDisplayEl = document.getElementById("mp-code-display");
-    var mpShareBtn = document.getElementById("mp-share");
+    var mpShareRow = document.getElementById("mp-share-row");
+    var mpShareEmailBtn = document.getElementById("mp-share-email");
+    var mpShareTextBtn = document.getElementById("mp-share-text");
+    var mpShareCopyBtn = document.getElementById("mp-share-copy");
     var mpJoinCodeInput = document.getElementById("mp-join-code");
     var mpSoloBtn = document.getElementById("mp-solo");
     var mpHostBtn = document.getElementById("mp-host");
@@ -2400,57 +2504,49 @@
       return url.toString();
     }
 
-    mpShareBtn.addEventListener("click", function () {
-      var code = mpCodeDisplayEl.textContent;
-      var url = mpInviteUrl(code);
+    // Deliberately not navigator.share(): two real-phone tests showed its
+    // OS share sheet not reliably giving a real Subject line or a
+    // distinctly clickable link once "Mail" or "Messages" was picked --
+    // Web Share only hands the target app a generic title/text/url, and
+    // it's entirely up to that app how (or whether) those become an
+    // actual subject field or a real link rather than plain text baked
+    // into a body string. mailto:/sms: links sidestep that inconsistency
+    // completely: we control the exact subject and body, on every
+    // platform, with no OS-level bridging in between to lose fidelity.
+    var MP_SHARE_SUBJECT = "Join my DOOM game";
+    function mpShareBody(url) {
+      return "Join my DOOM multiplayer game -- click the link below to connect:\n\n" + url;
+    }
 
-      // navigator.share hands off to the OS's own share sheet -- Messages,
-      // Mail, WhatsApp, "Copy", whatever the player already has installed
-      // -- which is what actually answers "email, text, or copy" in one
-      // button instead of a copy-only action. It's not available on every
-      // browser (desktop Chrome/Firefox notably still don't have it), so
-      // this falls back to a plain clipboard copy, and then to just
-      // displaying the link, rather than the button silently doing
-      // nothing on those.
-      //
-      // Deliberately no "text" field alongside "url": most Web Share
-      // implementations only have one plain-text body to hand the target
-      // app (Android's underlying share intent has a single EXTRA_TEXT),
-      // so given both, they get concatenated into one string -- and a
-      // URL sitting inside a longer string doesn't reliably get
-      // recognized as a link by every target's own compose view (some
-      // email/SMS compose fields only auto-link a URL that arrives on
-      // its own). A URL-only share is far more likely to be treated
-      // *as* a link -- e.g. iOS shows a real link preview card for it --
-      // rather than as prose that happens to contain one.
-      if (navigator.share) {
-        navigator.share({
-          title: "Join my DOOM game",
-          url: url
-        }).catch(function (err) {
-          // The share sheet's own "Cancel" rejects with AbortError -- that's
-          // the player changing their mind, not a failure worth reporting.
-          if (err && err.name !== "AbortError") {
-            mpSetStatusLink("Couldn't open the share sheet -- copy this link:", url);
-          }
+    mpShareEmailBtn.addEventListener("click", function () {
+      var url = mpInviteUrl(mpCodeDisplayEl.textContent);
+      location.href = "mailto:?subject=" + encodeURIComponent(MP_SHARE_SUBJECT) +
+                       "&body=" + encodeURIComponent(mpShareBody(url));
+    });
+
+    mpShareTextBtn.addEventListener("click", function () {
+      var url = mpInviteUrl(mpCodeDisplayEl.textContent);
+      // iOS's Messages app only recognizes sms:&body=..., while Android
+      // (and everything else that implements the sms: scheme at all)
+      // wants sms:?body=... -- getting this wrong on either platform
+      // means the body is silently dropped rather than an error, so it's
+      // worth branching on rather than picking one and hoping.
+      var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      var body = encodeURIComponent("Join my DOOM multiplayer game: " + url);
+      location.href = isIOS ? ("sms:&body=" + body) : ("sms:?body=" + body);
+    });
+
+    mpShareCopyBtn.addEventListener("click", function () {
+      var url = mpInviteUrl(mpCodeDisplayEl.textContent);
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(url).then(function () {
+          mpShareCopyBtn.textContent = "Copied!";
+          setTimeout(function () { mpShareCopyBtn.textContent = "Copy"; }, 1500);
+        }).catch(function () {
+          mpSetStatusLink("Couldn't copy automatically -- share this link:", url);
         });
       } else {
-        // No native share sheet (desktop Chrome/Firefox, as of this
-        // writing) -- mailto: is the closest desktop equivalent: the one
-        // mechanism that gives both a real Subject line and a link the
-        // recipient's mail client will auto-linkify once the email is
-        // sent/viewed, neither of which a bare clipboard copy could
-        // offer (there's no "subject" field in a plain clipboard
-        // string). Still copies the plain link to the clipboard too,
-        // quietly -- no toast of its own -- so it's available to paste
-        // elsewhere if the player closes the compose window without
-        // sending, e.g. to paste into a chat app instead.
-        if (navigator.clipboard) {
-          navigator.clipboard.writeText(url).catch(function () {});
-        }
-        var subject = encodeURIComponent("Join my DOOM game");
-        var body = encodeURIComponent("Join my DOOM multiplayer game -- click the link below to connect:\n\n" + url);
-        location.href = "mailto:?subject=" + subject + "&body=" + body;
+        mpSetStatusLink("Share this link:", url);
       }
     });
 
@@ -2493,8 +2589,9 @@
     // Mobile browsers throttle -- and can fully suspend -- a background
     // tab's JS execution, including the timer chain NET_WaitForLaunch's
     // emscripten_sleep(100) loop depends on to keep polling for the
-    // other player. Sharing the invite link (mpShareBtn's own handler,
-    // above) switches away to a different app on a phone -- exactly the
+    // other player. Sharing the invite link (the mpShareEmailBtn/
+    // mpShareTextBtn handlers above) switches away to a different app on
+    // a phone -- exactly the
     // scenario that triggers this -- so a host who shares right after
     // hosting can come back to find nothing has happened yet, even
     // though the other player already connected while they were away.
@@ -2572,7 +2669,7 @@
       mpCommitToChoice();
       mpCodeDisplayEl.textContent = code;
       mpCodeDisplayEl.hidden = false;
-      mpShareBtn.hidden = false;
+      mpShareRow.hidden = false;
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
@@ -2592,7 +2689,7 @@
         // instead of being stuck looking at a dead code + status line.
         mpChoiceEl.hidden = false;
         mpCodeDisplayEl.hidden = true;
-        mpShareBtn.hidden = true;
+        mpShareRow.hidden = true;
       });
     });
 
