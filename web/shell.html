@@ -2246,7 +2246,13 @@
     // that never got acknowledged keeps resending on its own, so it
     // still completes the handshake once the host is actually listening
     // again, without needing anything replayed from before.
-    window.mpOpenTransport = function (clientUrl, roomCode, onReceive) {
+    // onControl (optional) receives non-DOOM-packet JSON messages -- see
+    // mpJoinRoom's ping/pong handshake, further down, for what actually
+    // uses this: a lightweight, JS-only "is anyone home" check the
+    // joiner runs *before* ever starting the real DOOM connection
+    // attempt, since that one (net_client.c's NET_CL_Connect) only
+    // retries for 5 seconds before giving up for good.
+    window.mpOpenTransport = function (clientUrl, roomCode, onReceive, onControl) {
       var ws = null;
       var intentionalClose = false;
       var reconnectTimer = null;
@@ -2281,8 +2287,12 @@
               return;
             }
 
-            if (msg.type === "message" && msg.from === "group" && msg.dataType === "binary") {
-              onReceive(mpBase64ToBytes(msg.data));
+            if (msg.type === "message" && msg.from === "group") {
+              if (msg.dataType === "binary") {
+                onReceive(mpBase64ToBytes(msg.data));
+              } else if (msg.dataType === "json" && onControl) {
+                onControl(msg.data);
+              }
             }
           };
 
@@ -2338,6 +2348,16 @@
               // reason to also receive our own broadcast back.
               noEcho: true,
               data: mpBytesToBase64(bytes)
+            }));
+          },
+          sendControl: function (obj) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(JSON.stringify({
+              type: "sendToGroup",
+              group: roomCode,
+              dataType: "json",
+              noEcho: true,
+              data: obj
             }));
           },
           close: function () {
@@ -2673,8 +2693,20 @@
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
+      // Answers the joiner's "is anyone home" ping (see mpJoinRoom's own
+      // comment on this) with a pong, for as long as this room is still
+      // waiting to start. Wired up before mpStartGame ever runs, and
+      // stays live across reconnects (same transport object, just a
+      // different underlying WebSocket each time) -- there's no reason a
+      // ping arriving mid-reconnect should go unanswered once we're back.
+      function mpHostRespondToPing(data) {
+        if (data && data.mpPing && mpTransport) {
+          mpTransport.sendControl({ mpPong: true });
+        }
+      }
+
       window.mpNegotiate(code).then(function (url) {
-        return window.mpOpenTransport(url, code, mpDeliverPacket);
+        return window.mpOpenTransport(url, code, mpDeliverPacket, mpHostRespondToPing);
       }).then(function (transport) {
         mpTransport = transport;
         mpSetStatus("Waiting for the other player to join...");
@@ -2702,18 +2734,73 @@
     // which a fresh page load (the auto-join path) has no guarantee of
     // within any particular timeframe. mpWaitForModuleReady's own comment
     // has the full reasoning.
+    // net_client.c's real DOOM-level connect attempt (NET_CL_Connect,
+    // triggered once mpStartGame calls Module.callMain) only retries for
+    // 5 seconds before giving up for good (I_Error, which halts the
+    // engine) -- fine when the host is already listening, but a real
+    // problem for exactly the scenario this whole multiplayer feature
+    // revolves around: sharing a link means the host clicked away to
+    // send it, and there's no guarantee they're back within 5 seconds of
+    // the joiner opening that link. A joiner who arrives first, before
+    // the host has returned, would otherwise just fail outright.
+    //
+    // So the joiner never starts that 5-second-limited attempt until
+    // it's already confirmed someone's listening: a separate, JS-only
+    // ping/pong exchanged as plain group messages (mpOpenTransport's
+    // onControl, dataType "json" -- a different channel entirely from
+    // the binary DOOM packets net_websockets.c speaks, so the two can
+    // never be confused for each other), repeated every 1.5s with no
+    // give-up point of its own. This is the actual "keep polling"
+    // mechanism: as long as the joiner's tab is open, it keeps asking --
+    // the moment the host's tab comes back (its own transport survives
+    // backgrounding via mpOpenTransport's reconnect logic and starts
+    // answering pings again the instant it's reconnected), the very next
+    // ping gets a pong back and the real connection attempt begins,
+    // landing well inside its 5-second window since a live pong just
+    // proved the host is actually there right now.
+    function mpWaitForHostReady(transport) {
+      return new Promise(function (resolve) {
+        var pongHandler = function () {
+          clearInterval(pingTimer);
+          resolve();
+        };
+        mpPendingPongHandler = pongHandler;
+        var pingTimer = setInterval(function () {
+          transport.sendControl({ mpPing: true });
+        }, 1500);
+        transport.sendControl({ mpPing: true }); // don't wait a full interval for the first attempt
+      });
+    }
+
+    // Set by mpWaitForHostReady while a ping is outstanding; mpJoinRoom's
+    // own onControl callback below calls whichever one is currently
+    // pending. Simpler than threading a callback through mpOpenTransport
+    // after the fact, and there's only ever one join attempt live at a
+    // time per page.
+    var mpPendingPongHandler = null;
+
     function mpJoinRoom(code) {
       mpCommitToChoice();
       mpSetBusy(true);
       mpSetStatus("Connecting...");
 
-      Promise.all([
-        window.mpNegotiate(code).then(function (url) {
-          return window.mpOpenTransport(url, code, mpDeliverPacket);
-        }),
-        mpWaitForModuleReady()
-      ]).then(function (results) {
-        mpTransport = results[0];
+      function handleControl(data) {
+        if (data && data.mpPong && mpPendingPongHandler) {
+          var handler = mpPendingPongHandler;
+          mpPendingPongHandler = null;
+          handler();
+        }
+      }
+
+      var readyPromise = window.mpNegotiate(code).then(function (url) {
+        return window.mpOpenTransport(url, code, mpDeliverPacket, handleControl);
+      }).then(function (transport) {
+        mpTransport = transport;
+        mpSetStatus("Waiting for the host to be ready...");
+        return mpWaitForHostReady(transport);
+      });
+
+      Promise.all([readyPromise, mpWaitForModuleReady()]).then(function () {
         mpSetStatus("Connected -- starting game...");
         mpStartGame(["-connect", "peer"], true);
       }).catch(function (err) {
