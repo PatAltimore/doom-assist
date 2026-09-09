@@ -157,15 +157,44 @@
       line-height: 1.4;
     }
     .mp-btn { width: 100%; margin-bottom: 10px; }
-    /* .cheat-checkbox-label (reused as-is below) is display:flex, so
-       .mp-box's own text-align: center has no effect on it -- needs its
-       own centering, plus a bottom margin none of the cheats-tab uses
-       need since they're followed by more checkboxes, not a button. */
-    .mp-checkbox-label { justify-content: center; margin-bottom: 10px; font-size: 15px; }
-    /* .cheat-row (reused as-is) is also display:flex, same centering gap
-       as .cheat-checkbox-label above. */
-    .mp-level-row { justify-content: center; margin-bottom: 10px; }
-    .mp-level-row label { font-size: 15px; color: var(--text-dim); }
+    /* Co-op/Deathmatch mode toggle: two buttons sharing one bevel-bordered
+       box (matching .assist-btn's own bevel-border look), rather than a
+       generic slide switch -- reads as "two settings side by side, pick
+       one" the same way the rest of this project's chunky button UI does,
+       and .mp-mode-btn.active reuses .assist-btn's red highlight color so
+       it's visually consistent with every other "this is the selected/
+       active thing" indicator already on screen (the Cheats tab, the
+       assist-tab row). */
+    /* Mode toggle and level select share one row (see the HTML comment
+       above them) -- toggle gets the space it needs for two words,
+       select shrinks to fit "E1MN" since it never needs more. */
+    .mp-mode-level-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .mp-mode-toggle {
+      display: flex;
+      flex: 1;
+      border: 2px solid;
+      border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+    }
+    .mp-mode-btn {
+      flex: 1;
+      background: var(--stone-dark);
+      color: var(--text-dim);
+      border: none;
+      padding: 8px 4px;
+      font-family: inherit;
+      font-size: 15px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+    }
+    .mp-mode-btn + .mp-mode-btn { border-left: 2px solid var(--bevel-dark); }
+    .mp-mode-btn.active { background: var(--red); color: var(--white); }
+    .mp-mode-btn:not(.active):hover { background: var(--stone); color: var(--text); }
+    .mp-level-select { flex-shrink: 0; padding: 0 4px; }
     .mp-join-row {
       display: flex;
       gap: 6px;
@@ -788,29 +817,32 @@
               <button class="assist-btn mp-btn" id="mp-solo" type="button">Play Solo</button>
               <h2 class="mp-section-heading">MULTIPLAYER</h2>
               <p>Play with one other player over the internet.</p>
-              <!-- Deathmatch is a host-side-only choice: real chocolate-doom
-                   (d_net.c's SaveGameSettings/LoadGameSettings) already
-                   negotiates it from whoever's running the server down to
-                   every client during game start, so the joiner doesn't
-                   need -- or get -- a checkbox of their own; whatever the
-                   host picks here is what both players end up in. -->
-              <label class="cheat-checkbox-label mp-checkbox-label" for="mp-deathmatch">
-                <input type="checkbox" id="mp-deathmatch">
-                Deathmatch (instead of co-op)
-              </label>
-              <!-- Level is a host-side-only choice too, same reasoning as
-                   the deathmatch checkbox above -- d_net.c negotiates
-                   startepisode/startmap down to the joiner the same way
-                   it does deathmatch, so there's nothing for the joiner
-                   to pick. Populated from the same E1M1-E1M9 list as the
-                   Cheats tab's own warp-level select (see the JS below --
-                   shareware only ever has episode 1). Real DOOM's
-                   -warp flag defaults to E1M1 when omitted, which is why
-                   every game before this always started there regardless
-                   of deathmatch/co-op. -->
-              <div class="cheat-row mp-level-row">
-                <label for="mp-level">Level:</label>
-                <select class="assist-select" id="mp-level"></select>
+              <!-- Mode and level are both host-side-only choices: real
+                   chocolate-doom (d_net.c's SaveGameSettings/
+                   LoadGameSettings) already negotiates deathmatch and
+                   startepisode/startmap from whoever's running the
+                   server down to every client during game start, so the
+                   joiner doesn't need -- or get -- controls of their own;
+                   whatever the host picks here is what both players end
+                   up in. Sharing one row keeps this screen from
+                   overflowing a short mobile canvas -- see .mp-overlay's
+                   own CSS comment for the earlier, related overflow fix.
+                   A two-way toggle reads as "which mode" more directly
+                   than a checkbox did ("Deathmatch (instead of co-op)"
+                   only made sense once you'd already read it) -- see
+                   mpSetMode's own comment in the JS for how the two
+                   buttons track which one's current. Level is populated
+                   from the same E1M1-E1M9 list as the Cheats tab's own
+                   warp-level select (see the JS below -- shareware only
+                   ever has episode 1); its own visible "Level:" label got
+                   dropped for space, replaced with an aria-label so it's
+                   still announced for screen readers. -->
+              <div class="mp-mode-level-row">
+                <div class="mp-mode-toggle" id="mp-mode-toggle" role="group" aria-label="Game mode">
+                  <button type="button" class="mp-mode-btn active" id="mp-mode-coop" aria-pressed="true">Co-op</button>
+                  <button type="button" class="mp-mode-btn" id="mp-mode-deathmatch" aria-pressed="false">Deathmatch</button>
+                </div>
+                <select class="assist-select mp-level-select" id="mp-level" aria-label="Level"></select>
               </div>
               <button class="assist-btn mp-btn" id="mp-host" type="button">Host a Game</button>
               <div class="mp-join-row">
@@ -2295,6 +2327,24 @@
     var mpLevelSelect = document.getElementById("mp-level");
     populateE1MapSelect(mpLevelSelect); // see that function's own comment, near warp-level above
 
+    // ---- Co-op/Deathmatch mode toggle ----
+    // Two buttons, exactly one ever "active" at a time -- simpler than
+    // wiring up a real radio-input group for what's visually one control,
+    // and mpDeathmatchSelected is all mpHostBtn's handler actually needs
+    // to read.
+    var mpModeCoopBtn = document.getElementById("mp-mode-coop");
+    var mpModeDeathmatchBtn = document.getElementById("mp-mode-deathmatch");
+    var mpDeathmatchSelected = false;
+    function mpSetMode(deathmatch) {
+      mpDeathmatchSelected = deathmatch;
+      mpModeCoopBtn.classList.toggle("active", !deathmatch);
+      mpModeCoopBtn.setAttribute("aria-pressed", String(!deathmatch));
+      mpModeDeathmatchBtn.classList.toggle("active", deathmatch);
+      mpModeDeathmatchBtn.setAttribute("aria-pressed", String(deathmatch));
+    }
+    mpModeCoopBtn.addEventListener("click", function () { mpSetMode(false); });
+    mpModeDeathmatchBtn.addEventListener("click", function () { mpSetMode(true); });
+
     function mpSetStatus(text) {
       mpStatusEl.textContent = text;
       mpStatusEl.hidden = !text;
@@ -2439,9 +2489,9 @@
     mpHostBtn.addEventListener("click", function () {
       var code = mpGenerateRoomCode();
       // Real chocolate-doom's own -deathmatch flag (d_main.c) -- see the
-      // HTML comment on this checkbox for why only the host needs to
+      // HTML comment on the mode toggle for why only the host needs to
       // pass it; d_net.c negotiates it down to the joiner automatically.
-      var deathmatch = document.getElementById("mp-deathmatch").checked;
+      var deathmatch = mpDeathmatchSelected;
       // -warp takes episode then map for a non-commercial IWAD (d_main.c:
       // "startepisode = myargv[p+1]...startmap = myargv[p+2]...") --
       // shareware doom1.wad is always episode 1, but that first argument
