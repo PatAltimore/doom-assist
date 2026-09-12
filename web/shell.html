@@ -781,30 +781,6 @@
     }
     .toast.show { opacity: 1; }
 
-    /* Diagnostic readout of raw Gamepad API state -- brought back
-       specifically to find out why Start/Back-View/D-pad don't respond
-       on this controller even though the face buttons and both sticks
-       already work. A controller the Gamepad API can't match against
-       its known-device list may still report movement/face buttons
-       correctly (report layouts tend to agree on those) while scrambling
-       or omitting the less common Start/Select/D-pad indices this code
-       assumes from the "standard" mapping -- this shows the real numbers
-       instead of guessing again. See #gp-debug's JS comment. */
-    #gp-debug {
-      position: fixed;
-      top: 4px;
-      left: 4px;
-      z-index: 50;
-      background: rgba(0, 0, 0, 0.75);
-      color: #7fff7f;
-      font-family: monospace;
-      font-size: 11px;
-      line-height: 1.4;
-      padding: 4px 6px;
-      white-space: pre;
-      pointer-events: none;
-    }
-
     /* Mobile portrait: stack everything in one scrolling column instead
        of the game+sidebar side-by-side layout -- game at top, its
        controls directly below it, then the tabbed panel. No per-section
@@ -1106,7 +1082,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <div id="gp-debug" hidden></div>
 
   <script>
     // ---- Canvas sizing (pure layout -- see the .canvas-wrap comment in
@@ -2153,38 +2128,6 @@
     }
     var gpKeyState = {}; // key name -> was the aggregate (any mapped button) down last frame?
 
-    // Prints every connected pad's raw mapping/axes/pressed-button-
-    // indices on screen, throttled to ~10Hz so it's readable. This is
-    // the same technique that found the earlier "Unknown Gamepad"
-    // phantom-device problem -- brought back now to see, directly, what
-    // real index (or axis, if it turns out to be a D-pad "hat" instead
-    // of four separate buttons -- a common alternative encoding this
-    // code doesn't handle yet) Start/Back-View/D-pad actually report on
-    // this specific controller.
-    var gpDebugEl = document.getElementById("gp-debug");
-    var gpDebugFrame = 0;
-    function updateGamepadDebug(pads) {
-      if (++gpDebugFrame % 6 !== 0) return;
-      var lines = [];
-      for (var i = 0; i < pads.length; i++) {
-        var pad = pads[i];
-        if (!pad) continue;
-        var pressed = [];
-        for (var b = 0; b < pad.buttons.length; b++) {
-          if (pad.buttons[b] && pad.buttons[b].pressed) pressed.push(b);
-        }
-        var axesText = "";
-        for (var a = 0; a < pad.axes.length; a++) axesText += a + ":" + pad.axes[a].toFixed(2) + " ";
-        lines.push(
-          "[" + i + "] " + pad.id + " (mapping: " + (pad.mapping || "none") + ")\n" +
-          "    axes: " + axesText + "\n" +
-          "    buttons pressed: " + (pressed.length ? pressed.join(",") : "none")
-        );
-      }
-      gpDebugEl.hidden = lines.length === 0;
-      gpDebugEl.textContent = lines.join("\n");
-    }
-
     // Picks which connected pad actually drives the game this frame:
     // whichever slot currently has a deflected axis or a held button,
     // falling back to the first connected slot when nothing is active
@@ -2212,7 +2155,6 @@
     function pollGamepad() {
       requestAnimationFrame(pollGamepad);
       var pads = navigator.getGamepads ? navigator.getGamepads() : [];
-      updateGamepadDebug(pads);
       var pad = pickControlPad(pads);
       if (!pad) return;
 
@@ -2277,7 +2219,6 @@
     });
     window.addEventListener("gamepaddisconnected", function (e) {
       toast("Controller disconnected");
-      gpDebugEl.hidden = true;
       gpButtonState = {};
       gpKeyState = {};
       if (typeof Module !== "undefined" && Module.ccall) {
