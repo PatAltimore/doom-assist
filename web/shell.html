@@ -781,6 +781,27 @@
     }
     .toast.show { opacity: 1; }
 
+    /* Diagnostic readout of raw Gamepad API state -- see the JS comment
+       at gpDebugEl for why this exists (two failed fix attempts already
+       went out blind, guessing at the browser/hardware's exact axis and
+       button layout without any way to see what it actually reports).
+       Deliberately plain and out of the way -- top-left, small, monospace
+       -- since this is a temporary diagnostic, not a real feature. */
+    #gp-debug {
+      position: fixed;
+      top: 4px;
+      left: 4px;
+      z-index: 50;
+      background: rgba(0, 0, 0, 0.75);
+      color: #7fff7f;
+      font-family: monospace;
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 4px 6px;
+      white-space: pre;
+      pointer-events: none;
+    }
+
     /* Mobile portrait: stack everything in one scrolling column instead
        of the game+sidebar side-by-side layout -- game at top, its
        controls directly below it, then the tabbed panel. No per-section
@@ -1082,6 +1103,7 @@
   </div>
 
   <div class="toast" id="toast"></div>
+  <div id="gp-debug" hidden></div>
 
   <script>
     // ---- Canvas sizing (pure layout -- see the .canvas-wrap comment in
@@ -2096,6 +2118,33 @@
     // per press rather than through dispatchKey.
     var GP_WEAPON_BUTTON = 3; // Y
 
+    // Temporary diagnostic readout (see #gp-debug's CSS comment): two
+    // earlier fix attempts for this feature went out without any way to
+    // see what a *real* controller actually reports through the Gamepad
+    // API, since this sandbox has no physical hardware to test against
+    // -- only the touch-control code's already-proven axis convention
+    // and an assumed "standard" button layout to go on. This prints the
+    // raw pad.mapping/axes/pressed-button-indices on screen so the next
+    // real-hardware test tells us directly whether the browser is even
+    // reporting what this code assumes, instead of another guess.
+    var gpDebugEl = document.getElementById("gp-debug");
+    var gpDebugFrame = 0;
+    function updateGamepadDebug(pad) {
+      gpDebugEl.hidden = false;
+      if (++gpDebugFrame % 6 !== 0) return; // ~10Hz at 60fps -- readable without hammering layout
+      var pressed = [];
+      for (var b = 0; b < pad.buttons.length; b++) {
+        if (pad.buttons[b] && pad.buttons[b].pressed) pressed.push(b);
+      }
+      var axesText = "";
+      for (var a = 0; a < pad.axes.length; a++) axesText += a + ":" + pad.axes[a].toFixed(2) + " ";
+      gpDebugEl.textContent =
+        "gamepad: " + pad.id + "\n" +
+        "mapping: " + (pad.mapping || "(none)") + "\n" +
+        "axes: " + axesText + "\n" +
+        "buttons pressed: " + (pressed.length ? pressed.join(",") : "(none)");
+    }
+
     function pollGamepad() {
       requestAnimationFrame(pollGamepad);
       var pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -2104,6 +2153,7 @@
         if (pads[i]) { pad = pads[i]; break; } // first connected pad only -- this project has no split-screen concept
       }
       if (!pad) return;
+      updateGamepadDebug(pad);
 
       // Left stick: move + strafe, right stick: turn -- identical meaning
       // to the touch sticks feeding these same two exports (see the two
@@ -2159,6 +2209,7 @@
     });
     window.addEventListener("gamepaddisconnected", function (e) {
       toast("Controller disconnected");
+      gpDebugEl.hidden = true;
       gpButtonState = {};
       if (typeof Module !== "undefined" && Module.ccall) {
         try { Module.ccall("assist_set_move", null, ["number", "number"], [0, 0]); } catch (err) {}
