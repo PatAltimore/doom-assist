@@ -2105,7 +2105,12 @@
     // produces a quick keydown+keyup, a held button stays down, exactly
     // like a real keyboard key would.
     var GP_KEY_BUTTONS = {
-      0: "Control", // A -- Fire, same real key the touch Fire button uses
+      7: "Control", // Right trigger (RT) -- Fire, same real key the touch Fire button uses.
+                    // Standard mapping's analog triggers (button 6 = LT, 7 = RT) still
+                    // expose a plain boolean .pressed alongside their analog .value,
+                    // usually going true partway through the pull -- the same edge-
+                    // detection loop below (keyed off .pressed) needs no special case
+                    // for it.
       2: "Space",   // X -- Use, same real key the touch Use button uses
       1: "Escape",  // B -- pause/menu-back, same as the touch Back button
       9: "Enter",   // Start -- open menu from the title demo, confirm a menu item
