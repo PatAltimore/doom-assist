@@ -2118,42 +2118,71 @@
     // per press rather than through dispatchKey.
     var GP_WEAPON_BUTTON = 3; // Y
 
-    // Temporary diagnostic readout (see #gp-debug's CSS comment): two
-    // earlier fix attempts for this feature went out without any way to
-    // see what a *real* controller actually reports through the Gamepad
-    // API, since this sandbox has no physical hardware to test against
-    // -- only the touch-control code's already-proven axis convention
-    // and an assumed "standard" button layout to go on. This prints the
-    // raw pad.mapping/axes/pressed-button-indices on screen so the next
-    // real-hardware test tells us directly whether the browser is even
-    // reporting what this code assumes, instead of another guess.
+    // Temporary diagnostic readout (see #gp-debug's CSS comment): the
+    // first version of this only ever displayed navigator.getGamepads()
+    // slot 0, on the assumption that whichever slot came back non-null
+    // first was necessarily the real controller. Real-hardware testing
+    // showed a connected pad reporting as "Unknown Gamepad", mapping
+    // "(none)", with every axis/button frozen at rest no matter what was
+    // pressed -- exactly what a phantom/unrelated HID device Windows
+    // also exposes as a "gamepad" would look like, sitting in front of
+    // the real one in the pads array. This dumps every non-null slot,
+    // not just the first, so a decoy device (if that's what this is)
+    // shows up right next to the real one instead of hiding it.
     var gpDebugEl = document.getElementById("gp-debug");
     var gpDebugFrame = 0;
-    function updateGamepadDebug(pad) {
-      gpDebugEl.hidden = false;
+    function updateGamepadDebug(pads) {
       if (++gpDebugFrame % 6 !== 0) return; // ~10Hz at 60fps -- readable without hammering layout
-      var pressed = [];
-      for (var b = 0; b < pad.buttons.length; b++) {
-        if (pad.buttons[b] && pad.buttons[b].pressed) pressed.push(b);
+      var lines = [];
+      for (var i = 0; i < pads.length; i++) {
+        var pad = pads[i];
+        if (!pad) continue;
+        var pressed = [];
+        for (var b = 0; b < pad.buttons.length; b++) {
+          if (pad.buttons[b] && pad.buttons[b].pressed) pressed.push(b);
+        }
+        var axesText = "";
+        for (var a = 0; a < pad.axes.length; a++) axesText += a + ":" + pad.axes[a].toFixed(2) + " ";
+        lines.push(
+          "[" + i + "] " + pad.id + " (mapping: " + (pad.mapping || "none") + ")\n" +
+          "    axes: " + axesText + "\n" +
+          "    buttons pressed: " + (pressed.length ? pressed.join(",") : "none")
+        );
       }
-      var axesText = "";
-      for (var a = 0; a < pad.axes.length; a++) axesText += a + ":" + pad.axes[a].toFixed(2) + " ";
-      gpDebugEl.textContent =
-        "gamepad: " + pad.id + "\n" +
-        "mapping: " + (pad.mapping || "(none)") + "\n" +
-        "axes: " + axesText + "\n" +
-        "buttons pressed: " + (pressed.length ? pressed.join(",") : "(none)");
+      gpDebugEl.hidden = lines.length === 0;
+      gpDebugEl.textContent = lines.join("\n");
+    }
+
+    // Picks which connected pad actually drives the game this frame:
+    // whichever slot currently has a deflected axis or a held button,
+    // falling back to the first connected slot when nothing is active
+    // (so movement still zeroes out correctly on release). This is a
+    // direct response to the "Unknown Gamepad" finding above -- if a
+    // silent decoy device is squatting on slot 0, always trusting slot
+    // 0 would mean the real controller could never do anything even
+    // though the browser sees it fine in a later slot.
+    function pickControlPad(pads) {
+      var fallback = null;
+      for (var i = 0; i < pads.length; i++) {
+        var p = pads[i];
+        if (!p) continue;
+        if (!fallback) fallback = p;
+        for (var a = 0; a < p.axes.length; a++) {
+          if (Math.abs(p.axes[a]) > 0.05) return p;
+        }
+        for (var b = 0; b < p.buttons.length; b++) {
+          if (p.buttons[b] && p.buttons[b].pressed) return p;
+        }
+      }
+      return fallback;
     }
 
     function pollGamepad() {
       requestAnimationFrame(pollGamepad);
       var pads = navigator.getGamepads ? navigator.getGamepads() : [];
-      var pad = null;
-      for (var i = 0; i < pads.length; i++) {
-        if (pads[i]) { pad = pads[i]; break; } // first connected pad only -- this project has no split-screen concept
-      }
+      updateGamepadDebug(pads);
+      var pad = pickControlPad(pads);
       if (!pad) return;
-      updateGamepadDebug(pad);
 
       // Left stick: move + strafe, right stick: turn -- identical meaning
       // to the touch sticks feeding these same two exports (see the two
