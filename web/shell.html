@@ -2057,6 +2057,109 @@
       catch (e) { /* engine not ready yet */ }
     }, null, null, true);
 
+    // ---- Wired USB / Bluetooth gamepad support ----
+    // The Gamepad API has no "axis changed" or "button changed" event --
+    // browsers only fire gamepadconnected/gamepaddisconnected. The only
+    // way to read current stick/button state is to poll navigator.
+    // getGamepads() yourself, so this drives its own requestAnimationFrame
+    // loop (same idea as the game's own render loop) rather than trying
+    // to hang anything off an event listener.
+    //
+    // Button/axis indices below assume the "standard gamepad" mapping
+    // (https://w3c.github.io/gamepad/#remapping) -- the layout a wired
+    // Xbox controller reports, and what Chrome/Edge/Firefox all normalize
+    // known controllers to. A controller the browser can't recognize may
+    // report axes/buttons in a different order; there's no way to detect
+    // that from here, so this just assumes the common case.
+    var gpButtonState = {}; // button index -> was it down last frame?
+    var GP_DEADZONE = 0.15; // stick drift well inside this on most pads at rest
+
+    // Mirrors bindHoldButton's press/release pattern (further up), but
+    // driven by polled gamepad state instead of pointer events: dispatch
+    // a real keydown the frame a mapped button goes from up to down, and
+    // a real keyup the frame it goes back up. That one rule handles both
+    // "hold to fire/use" buttons and "tap to confirm/back" buttons
+    // correctly with no separate cases -- a quick tap on the controller
+    // produces a quick keydown+keyup, a held button stays down, exactly
+    // like a real keyboard key would.
+    var GP_KEY_BUTTONS = {
+      0: "Control", // A -- Fire, same real key the touch Fire button uses
+      2: "Space",   // X -- Use, same real key the touch Use button uses
+      1: "Escape",  // B -- pause/menu-back, same as the touch Back button
+      9: "Enter",   // Start -- open menu from the title demo, confirm a menu item
+      8: "Tab",     // Back/View -- native automap toggle (st_stuff.c), no touch equivalent exists for this
+      12: "ArrowUp",   // D-pad up -- menu navigation only (menus read arrow keys directly)
+      13: "ArrowDown"  // D-pad down -- menu navigation only
+    };
+    // Weapon-next has no bound key at all in this codebase (see tc-weapon's
+    // own comment above) -- same direct C export used there, called once
+    // per press rather than through dispatchKey.
+    var GP_WEAPON_BUTTON = 3; // Y
+
+    function pollGamepad() {
+      requestAnimationFrame(pollGamepad);
+      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      var pad = null;
+      for (var i = 0; i < pads.length; i++) {
+        if (pads[i]) { pad = pads[i]; break; } // first connected pad only -- this project has no split-screen concept
+      }
+      if (!pad) return;
+
+      // Left stick: move + strafe, right stick: turn -- identical meaning
+      // to the touch sticks feeding these same two exports (see the two
+      // setupStick calls just above). A gamepad axis already reports
+      // -1..1 with "up" as negative Y, the same sign convention
+      // assist_apply_touch_controls (assist.c) expects from the touch
+      // stick's screen-space dy, so no inversion is needed here.
+      var lx = pad.axes[0] || 0, ly = pad.axes[1] || 0, rx = pad.axes[2] || 0;
+      if (Math.abs(lx) < GP_DEADZONE) lx = 0;
+      if (Math.abs(ly) < GP_DEADZONE) ly = 0;
+      if (Math.abs(rx) < GP_DEADZONE) rx = 0;
+
+      if (typeof Module !== "undefined" && Module.ccall) {
+        try { Module.ccall("assist_set_move", null, ["number", "number"], [Math.round(lx * 100), Math.round(ly * 100)]); }
+        catch (e) { /* engine not ready yet */ }
+        try { Module.ccall("assist_set_turn", null, ["number"], [Math.round(rx * 100)]); }
+        catch (e) { /* engine not ready yet */ }
+      }
+
+      for (var idx in GP_KEY_BUTTONS) {
+        var down = !!(pad.buttons[idx] && pad.buttons[idx].pressed);
+        if (down === !!gpButtonState[idx]) continue; // no change since last frame
+        gpButtonState[idx] = down;
+        var k = KEYS[GP_KEY_BUTTONS[idx]];
+        document.getElementById("canvas").focus();
+        dispatchKey(down ? "keydown" : "keyup", k[0], k[1], k[2]);
+      }
+
+      var weaponDown = !!(pad.buttons[GP_WEAPON_BUTTON] && pad.buttons[GP_WEAPON_BUTTON].pressed);
+      if (weaponDown && !gpButtonState[GP_WEAPON_BUTTON]) {
+        if (typeof Module !== "undefined" && Module.ccall) {
+          try { Module.ccall("assist_switch_weapon", null, ["number"], [1]); } catch (e) {}
+        }
+      }
+      gpButtonState[GP_WEAPON_BUTTON] = weaponDown;
+    }
+
+    window.addEventListener("gamepadconnected", function (e) {
+      toast("Controller connected: " + e.gamepad.id);
+      // Only start the poll loop once a pad is actually seen -- most
+      // browsers don't populate navigator.getGamepads() at all until
+      // this event has fired at least once (a page load with a
+      // controller already plugged in still needs one button press
+      // before the browser reports it, a Gamepad API quirk, not a bug
+      // here), and there's no point polling before then.
+      requestAnimationFrame(pollGamepad);
+    });
+    window.addEventListener("gamepaddisconnected", function (e) {
+      toast("Controller disconnected");
+      gpButtonState = {};
+      if (typeof Module !== "undefined" && Module.ccall) {
+        try { Module.ccall("assist_set_move", null, ["number", "number"], [0, 0]); } catch (err) {}
+        try { Module.ccall("assist_set_turn", null, ["number"], [0]); } catch (err) {}
+      }
+    });
+
     // ---- Emscripten module wiring ----
     var statusElement = document.getElementById("status");
     var progressElement = document.getElementById("progress");
