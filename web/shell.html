@@ -1661,7 +1661,8 @@
     var KEYS = {
       Tab: ["Tab", "Tab", 9], Space: ["Space", " ", 32], Control: ["ControlLeft", "Control", 17],
       Enter: ["Enter", "Enter", 13], Escape: ["Escape", "Escape", 27],
-      ArrowUp: ["ArrowUp", "ArrowUp", 38], ArrowDown: ["ArrowDown", "ArrowDown", 40]
+      ArrowUp: ["ArrowUp", "ArrowUp", 38], ArrowDown: ["ArrowDown", "ArrowDown", 40],
+      ArrowLeft: ["ArrowLeft", "ArrowLeft", 37], ArrowRight: ["ArrowRight", "ArrowRight", 39]
     };
     // The legacy `keyCode`/`which` fields identify a *physical key*,
     // case-insensitively, as the key's uppercase letter code (this is a
@@ -2099,39 +2100,35 @@
     var gpButtonState = {}; // button index -> was it down last frame?
     var GP_DEADZONE = 0.15; // stick drift well inside this on most pads at rest
 
-    // This specific controller (confirmed via the debug readout below,
-    // read directly off it by the person testing) does NOT report a
-    // "standard" mapping: both triggers come through as plain analog
-    // AXES (3 = LT, 4 = RT) rather than buttons 6/7, the D-pad is a
-    // single hat-switch axis (9) rather than four separate buttons, and
-    // Menu (Start's equivalent on newer Xbox controllers) is button 11,
-    // not 9. None of that is guessable from the spec -- it's exactly why
-    // the debug panel exists. The face buttons/bumpers/sticks, by
-    // contrast, came through as expected the whole time.
+    // This controller's real layout, confirmed via the debug readout
+    // below and read directly off it by the person testing: RT=7, RB=5,
+    // Menu=9, D-pad up/down/left/right=12/13/14/15 -- the W3C "standard"
+    // gamepad mapping's own layout after all, unlike an earlier
+    // controller tested in this same session whose triggers turned out
+    // to be analog axes and whose Menu button was a different index
+    // entirely. There's no way to know which kind a given controller is
+    // without checking -- that's what the debug panel is for.
     //
     // Mirrors bindHoldButton's press/release pattern (further up), but
     // driven by polled gamepad state instead of pointer events: dispatch
-    // a real keydown the frame a mapped input goes from up to down, and
+    // a real keydown the frame a mapped button goes from up to down, and
     // a real keyup the frame it goes back up. That one rule handles both
-    // "hold to fire/use" inputs and "tap to confirm/back" ones correctly
+    // "hold to fire/use" buttons and "tap to confirm/back" ones correctly
     // with no separate cases -- a quick tap produces a quick keydown+
-    // keyup, a held input stays down, exactly like a real keyboard key.
+    // keyup, a held button stays down, exactly like a real keyboard key.
     var GP_KEY_BUTTONS = {
-      0: "Space",  // A -- Use, same real key the touch Use button uses
-      3: "Tab",    // Y -- toggle the automap ("map view"), matching real
-                   // console Doom's own control scheme
-      11: "Enter"  // Menu -- open the menu from the title demo, confirm a
-                   // menu item
+      0: "Space",       // A -- Use, same real key the touch Use button uses
+      3: "Tab",         // Y -- toggle the automap ("map view"), matching real
+                        // console Doom's own control scheme
+      7: "Control",     // Right trigger (RT) -- Fire
+      9: "Enter",       // Menu -- open the menu from the title demo, confirm
+                        // a menu item
+      12: "ArrowUp",    // D-pad up -- menu navigation (menus read arrow keys directly)
+      13: "ArrowDown",  // D-pad down
+      14: "ArrowLeft",  // D-pad left -- also adjusts sliders (volume, screen
+                        // size) in the options menus
+      15: "ArrowRight"  // D-pad right
     };
-    var GP_KEY_AXES = {
-      4: "Control" // Right trigger (RT) -- Fire. Checked against
-                   // GP_AXIS_TRIGGER_THRESHOLD below like a digital button
-                   // since Fire is a boolean hold in this engine, not an
-                   // analog value -- there's no "half fire".
-    };
-    var GP_AXIS_TRIGGER_THRESHOLD = 0.1; // safely above rest under either
-    // the -1..1 (rest at -1) or 0..1 (rest at 0) axis convention different
-    // drivers use for a trigger, without needing to know which this one is.
 
     // Weapon-next has no bound key at all in this codebase (see tc-weapon's
     // own comment above) -- same direct C export used there, called once
@@ -2140,29 +2137,21 @@
     // X and B are deliberately left doing nothing.
     var GP_WEAPON_BUTTONS = [5]; // RB
 
-    // Inverted once up front: key name -> every button/axis index that
-    // maps to it. pollGamepad tracks down/up state per *key*, not per
-    // physical input, so two inputs sharing a key would resolve correctly
-    // (one keydown when the first goes active, one keyup only once *all*
-    // of them are back at rest) if that's ever needed again -- it isn't
-    // right now (every key below has exactly one source), but this is the
-    // same mechanism that fixed a real dropped-fire bug the last time two
-    // buttons shared "Control", so it stays rather than reverting to
-    // simpler per-input tracking.
+    // Inverted once up front: key name -> every button index that maps to
+    // it. pollGamepad tracks down/up state per *key*, not per button, so
+    // two buttons sharing a key would resolve correctly (one keydown when
+    // the first goes down, one keyup only once *all* of them are back up)
+    // if that's ever needed again -- it isn't right now (every key below
+    // has exactly one source), but this is the same mechanism that fixed
+    // a real dropped-fire bug the last time two buttons shared "Control"
+    // on a different controller, so it stays rather than reverting to
+    // simpler per-button tracking.
     var GP_KEY_TO_BUTTONS = {};
     for (var gpIdx in GP_KEY_BUTTONS) {
       var gpKeyName = GP_KEY_BUTTONS[gpIdx];
       (GP_KEY_TO_BUTTONS[gpKeyName] = GP_KEY_TO_BUTTONS[gpKeyName] || []).push(gpIdx);
     }
-    var GP_KEY_TO_AXES = {};
-    for (var gpAxisIdx in GP_KEY_AXES) {
-      var gpAxisKeyName = GP_KEY_AXES[gpAxisIdx];
-      (GP_KEY_TO_AXES[gpAxisKeyName] = GP_KEY_TO_AXES[gpAxisKeyName] || []).push(gpAxisIdx);
-    }
-    var GP_ALL_KEY_NAMES = {};
-    for (var gpK1 in GP_KEY_TO_BUTTONS) GP_ALL_KEY_NAMES[gpK1] = true;
-    for (var gpK2 in GP_KEY_TO_AXES) GP_ALL_KEY_NAMES[gpK2] = true;
-    var gpKeyState = {}; // key name -> was the aggregate (any mapped source) down last frame?
+    var gpKeyState = {}; // key name -> was the aggregate (any mapped button) down last frame?
 
     // Prints every connected pad's raw mapping/axes/pressed-button-
     // indices on screen, throttled to ~10Hz so it's readable. This is
@@ -2245,21 +2234,11 @@
         catch (e) { /* engine not ready yet */ }
       }
 
-      for (var keyName in GP_ALL_KEY_NAMES) {
-        var down = false;
+      for (var keyName in GP_KEY_TO_BUTTONS) {
         var btnIdxs = GP_KEY_TO_BUTTONS[keyName];
-        if (btnIdxs) {
-          for (var bi = 0; bi < btnIdxs.length; bi++) {
-            if (pad.buttons[btnIdxs[bi]] && pad.buttons[btnIdxs[bi]].pressed) { down = true; break; }
-          }
-        }
-        if (!down) {
-          var axisIdxs = GP_KEY_TO_AXES[keyName];
-          if (axisIdxs) {
-            for (var ai = 0; ai < axisIdxs.length; ai++) {
-              if (pad.axes[axisIdxs[ai]] > GP_AXIS_TRIGGER_THRESHOLD) { down = true; break; }
-            }
-          }
+        var down = false;
+        for (var bi = 0; bi < btnIdxs.length; bi++) {
+          if (pad.buttons[btnIdxs[bi]] && pad.buttons[btnIdxs[bi]].pressed) { down = true; break; }
         }
         if (down === !!gpKeyState[keyName]) continue; // no change since last frame
         gpKeyState[keyName] = down;
