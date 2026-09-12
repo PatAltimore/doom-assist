@@ -2141,15 +2141,21 @@
       gpButtonState[GP_WEAPON_BUTTON] = weaponDown;
     }
 
+    // Start the poll loop unconditionally at load, rather than waiting
+    // for gamepadconnected to fire first. That event is unreliable as a
+    // *trigger*: Chrome/Edge won't report a controller that was already
+    // plugged in before the page loaded until the browser actually sees
+    // a button press or stick move on it (privacy hardening against
+    // passive device fingerprinting) -- so gating the whole loop behind
+    // the event meant a controller plugged in ahead of time never did
+    // anything at all, since nothing was polling to notice that first
+    // button press either. pollGamepad() itself is a no-op every frame
+    // navigator.getGamepads() reports nothing, so running it from the
+    // start costs nothing and has no failure mode to gate against.
+    pollGamepad();
+
     window.addEventListener("gamepadconnected", function (e) {
       toast("Controller connected: " + e.gamepad.id);
-      // Only start the poll loop once a pad is actually seen -- most
-      // browsers don't populate navigator.getGamepads() at all until
-      // this event has fired at least once (a page load with a
-      // controller already plugged in still needs one button press
-      // before the browser reports it, a Gamepad API quirk, not a bug
-      // here), and there's no point polling before then.
-      requestAnimationFrame(pollGamepad);
     });
     window.addEventListener("gamepaddisconnected", function (e) {
       toast("Controller disconnected");
