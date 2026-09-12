@@ -781,27 +781,6 @@
     }
     .toast.show { opacity: 1; }
 
-    /* Diagnostic readout of raw Gamepad API state -- see the JS comment
-       at gpDebugEl for why this exists (two failed fix attempts already
-       went out blind, guessing at the browser/hardware's exact axis and
-       button layout without any way to see what it actually reports).
-       Deliberately plain and out of the way -- top-left, small, monospace
-       -- since this is a temporary diagnostic, not a real feature. */
-    #gp-debug {
-      position: fixed;
-      top: 4px;
-      left: 4px;
-      z-index: 50;
-      background: rgba(0, 0, 0, 0.75);
-      color: #7fff7f;
-      font-family: monospace;
-      font-size: 11px;
-      line-height: 1.4;
-      padding: 4px 6px;
-      white-space: pre;
-      pointer-events: none;
-    }
-
     /* Mobile portrait: stack everything in one scrolling column instead
        of the game+sidebar side-by-side layout -- game at top, its
        controls directly below it, then the tabbed panel. No per-section
@@ -1103,7 +1082,6 @@
   </div>
 
   <div class="toast" id="toast"></div>
-  <div id="gp-debug" hidden></div>
 
   <script>
     // ---- Canvas sizing (pure layout -- see the .canvas-wrap comment in
@@ -2111,7 +2089,7 @@
                     // usually going true partway through the pull -- the same edge-
                     // detection loop below (keyed off .pressed) needs no special case
                     // for it.
-      2: "Space",   // X -- Use, same real key the touch Use button uses
+      0: "Space",   // A -- Use, same real key the touch Use button uses
       1: "Escape",  // B -- pause/menu-back, same as the touch Back button
       9: "Enter",   // Start -- open menu from the title demo, confirm a menu item
       8: "Tab",     // Back/View -- native automap toggle (st_stuff.c), no touch equivalent exists for this
@@ -2122,41 +2100,6 @@
     // own comment above) -- same direct C export used there, called once
     // per press rather than through dispatchKey.
     var GP_WEAPON_BUTTON = 3; // Y
-
-    // Temporary diagnostic readout (see #gp-debug's CSS comment): the
-    // first version of this only ever displayed navigator.getGamepads()
-    // slot 0, on the assumption that whichever slot came back non-null
-    // first was necessarily the real controller. Real-hardware testing
-    // showed a connected pad reporting as "Unknown Gamepad", mapping
-    // "(none)", with every axis/button frozen at rest no matter what was
-    // pressed -- exactly what a phantom/unrelated HID device Windows
-    // also exposes as a "gamepad" would look like, sitting in front of
-    // the real one in the pads array. This dumps every non-null slot,
-    // not just the first, so a decoy device (if that's what this is)
-    // shows up right next to the real one instead of hiding it.
-    var gpDebugEl = document.getElementById("gp-debug");
-    var gpDebugFrame = 0;
-    function updateGamepadDebug(pads) {
-      if (++gpDebugFrame % 6 !== 0) return; // ~10Hz at 60fps -- readable without hammering layout
-      var lines = [];
-      for (var i = 0; i < pads.length; i++) {
-        var pad = pads[i];
-        if (!pad) continue;
-        var pressed = [];
-        for (var b = 0; b < pad.buttons.length; b++) {
-          if (pad.buttons[b] && pad.buttons[b].pressed) pressed.push(b);
-        }
-        var axesText = "";
-        for (var a = 0; a < pad.axes.length; a++) axesText += a + ":" + pad.axes[a].toFixed(2) + " ";
-        lines.push(
-          "[" + i + "] " + pad.id + " (mapping: " + (pad.mapping || "none") + ")\n" +
-          "    axes: " + axesText + "\n" +
-          "    buttons pressed: " + (pressed.length ? pressed.join(",") : "none")
-        );
-      }
-      gpDebugEl.hidden = lines.length === 0;
-      gpDebugEl.textContent = lines.join("\n");
-    }
 
     // Picks which connected pad actually drives the game this frame:
     // whichever slot currently has a deflected axis or a held button,
@@ -2185,7 +2128,6 @@
     function pollGamepad() {
       requestAnimationFrame(pollGamepad);
       var pads = navigator.getGamepads ? navigator.getGamepads() : [];
-      updateGamepadDebug(pads);
       var pad = pickControlPad(pads);
       if (!pad) return;
 
@@ -2243,7 +2185,6 @@
     });
     window.addEventListener("gamepaddisconnected", function (e) {
       toast("Controller disconnected");
-      gpDebugEl.hidden = true;
       gpButtonState = {};
       if (typeof Module !== "undefined" && Module.ccall) {
         try { Module.ccall("assist_set_move", null, ["number", "number"], [0, 0]); } catch (err) {}
