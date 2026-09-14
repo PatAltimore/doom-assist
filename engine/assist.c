@@ -364,7 +364,22 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 // line->special numbers, confirmed directly against the case labels that
 // actually call EV_Teleport/G_ExitLevel/G_SecretExitLevel/EV_VerticalDoor/
 // EV_DoLockedDoor (p_spec.c, p_switch.c, p_doors.c) rather than assumed
-// from memory. Marked at each line's midpoint. A locked door's special
+// from memory. Marked at each line's midpoint.
+//
+// Normal exits (11/52, G_ExitLevel) and secret exits (51/124,
+// G_SecretExitLevel) get *separate* types rather than sharing one, even
+// though both "end the level". E1M3 is the one shareware map with both,
+// and they sit far apart -- the secret exit to E1M9 is much nearer the
+// player start than the real one. Drawn identically, the nearer marker
+// reads as "the exit" and walks you to a door you can't open without
+// first finding the hidden route; that's a real wrong turn this map is
+// supposed to prevent, not cause.
+//
+// Note that E1M8 has no exit linedef at all, so it gets no exit marker
+// from any of this: that level ends through sector special 11 (the
+// damaging floor you teleport into once killing both Barons runs
+// A_BossDeath and lowers every sector tagged 666, p_enemy.c), which is
+// sector state, not a line. Its Level Hints entry carries that instead. A locked door's special
 // stays put (so it keeps showing) unless it's the D1 "opens once,
 // permanently" variant (32/33/34), which -- like a found secret --
 // clears itself back to a plain special the instant it's used
@@ -383,6 +398,7 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 #define ASSIST_POI_DOOR_RED    8
 #define ASSIST_POI_DOOR_YELLOW 9
 #define ASSIST_POI_SWITCH      10
+#define ASSIST_POI_EXIT_SECRET 11
 
 #define ASSIST_MAXPOI 64
 static int assist_poi_buf[ASSIST_MAXPOI * 3]; // per POI: x, y, type
@@ -493,8 +509,10 @@ static void assist_scan_pois(void)
         int type = 0;
         if (special == 39 || special == 97 || special == 125 || special == 126)
             type = ASSIST_POI_TELEPORT;
-        else if (special == 11 || special == 51 || special == 52 || special == 124)
+        else if (special == 11 || special == 52)
             type = ASSIST_POI_EXIT;
+        else if (special == 51 || special == 124)
+            type = ASSIST_POI_EXIT_SECRET;
         else if (special == 26 || special == 32 || special == 99 || special == 133)
             type = ASSIST_POI_DOOR_BLUE;
         else if (special == 28 || special == 33 || special == 134 || special == 135)

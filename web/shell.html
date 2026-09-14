@@ -1029,9 +1029,10 @@
           <div class="map-legend-item"><span class="map-legend-swatch map-legend-swatch-square" style="background:#e8e13a"></span>Yellow door</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#b03ae8"></span>Teleporter</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c"></span>Exit</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c; border-radius:0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);"></span>Secret exit</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae8e8; border-radius:0; clip-path: polygon(50% 0%, 0% 100%, 100% 100%);"></span>Switch</div>
         </div>
-        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it.</p>
+        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it. A green diamond is a <em>secret</em> exit, not the normal one -- E1M3 has both, a long way apart. E1M8 is the one map with no exit marker at all: it has no exit switch, and ends when you kill both Barons.</p>
       </div>
 
       <div id="cheats-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-cheats" hidden>
@@ -1254,7 +1255,7 @@
         { text: "This level's textures were stitched together at load time from multiple smaller WAD patches into one composite image, rather than stored as single large textures.", slug: "r-data-c", label: "Texture data manager" }
       ]},
       { level: 8, name: "E1M8", tips: [
-        { text: "Two Barons of Hell guard the end of this episode — they run the exact same monster state-machine as every regular enemy, just with a tankier entry in the stats table.", slug: "p-enemy-c", label: "Enemy AI" },
+        { text: "This is the one map with no exit marker, because it has no exit switch: killing both Barons of Hell is what ends it. The last one to die runs a check that lowers every sector tagged 666, opening the way to the teleporter out.", slug: "p-enemy-c", label: "Enemy AI" },
         { text: "Every monster, item, and projectile in the game — including the Baron — is defined by one shared table of states, sprites, and stats, rather than custom code per monster.", slug: "info-c", label: "Thing info tables" },
         { text: "Clearing this level ends the shareware episode and hands off to the text-crawl finale screen, drawn by code dedicated entirely to that transition.", slug: "f-finale-c", label: "Finale screens" }
       ]},
@@ -1487,7 +1488,16 @@
       // triangle, see the poiType === 10 branch below) -- not reused
       // from any key/door pair, since a switch doesn't correspond to a
       // specific key the way a door does.
-      10: "#3ae8e8"
+      10: "#3ae8e8",
+      // Secret exit (11) keeps the normal exit's exact green and changes
+      // shape instead (a diamond, see the poiType === 11 branch below),
+      // the same way doors reuse their key's color -- it IS an exit, so
+      // giving it an unrelated hue would read as an unrelated thing.
+      // Shape alone also keeps it the quieter of the two markers, which
+      // suits a spoiler you didn't ask for: it distinguishes the two
+      // without announcing "there's a secret exit here" louder than the
+      // real one.
+      11: "#3ae85c"
     };
     var mapCanvas = document.getElementById("map-canvas");
     var mapCtx = mapCanvas.getContext("2d");
@@ -1568,6 +1578,17 @@
             mapCtx.moveTo(pp[0], pp[1] - 6);
             mapCtx.lineTo(pp[0] - 6, pp[1] + 5);
             mapCtx.lineTo(pp[0] + 6, pp[1] + 5);
+            mapCtx.closePath();
+            mapCtx.fill();
+          } else if (poiType === 11) {
+            // Secret exit: same green as the normal exit, drawn as a
+            // diamond so the two can't be mistaken for each other on a
+            // map that has both (E1M3, the only shareware one that does).
+            mapCtx.beginPath();
+            mapCtx.moveTo(pp[0], pp[1] - 6);
+            mapCtx.lineTo(pp[0] + 6, pp[1]);
+            mapCtx.lineTo(pp[0], pp[1] + 6);
+            mapCtx.lineTo(pp[0] - 6, pp[1]);
             mapCtx.closePath();
             mapCtx.fill();
           } else {
