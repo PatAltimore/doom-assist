@@ -2117,11 +2117,9 @@
       3: "Tab",         // Y -- toggle the automap ("map view"), matching real
                         // console Doom's own control scheme
       7: "Control",     // Right trigger (RT) -- Fire
-      8: "Escape",      // View/Back -- pause: Enter (Menu's own key, below)
-                        // only opens the menu from the title-screen demo or
-                        // confirms an already-open menu item, it doesn't pop
-                        // the pause menu up during live gameplay the way
-                        // Escape does -- this is what was actually missing.
+      // Button 8 (View/Back) is deliberately NOT listed here -- it needs
+      // its own handling below (see the dedicated block further down),
+      // not a plain key mapping.
       9: "Enter",       // Menu -- open the menu from the title demo, confirm
                         // a menu item
       12: "ArrowUp",    // D-pad up -- menu navigation (menus read arrow keys directly)
@@ -2153,6 +2151,7 @@
       (GP_KEY_TO_BUTTONS[gpKeyName] = GP_KEY_TO_BUTTONS[gpKeyName] || []).push(gpIdx);
     }
     var gpKeyState = {}; // key name -> was the aggregate (any mapped button) down last frame?
+    var gpBackEscapeDown = false; // true only while View/Back's own Escape keydown (below) is outstanding and owes a matching keyup
 
     // Picks which connected pad actually drives the game this frame:
     // whichever slot currently has a deflected axis or a held button,
@@ -2225,6 +2224,42 @@
         }
         gpButtonState[wIdx] = weaponDown;
       }
+
+      // View/Back (button 8): pause/resume, but there are two genuinely
+      // different "paused" states in this engine and only one of them is
+      // reachable by a real key at all. Auto-pause (clicking a "see the
+      // code" link) and the touch canvas-tap both drive `paused`
+      // directly via assist_toggle_pause() (assist.c) -- the actual
+      // engine pause flag, same as a real Pause key. Escape is a
+      // completely different mechanism: it only opens/closes the native
+      // menu (`menuactive`, m_menu.c's M_StartControlPanel), which never
+      // touches `paused` at all. So once something sets `paused` via the
+      // first path, Escape can't undo it -- pressing it just pops the
+      // pause menu up over a game that stays frozen underneath, which is
+      // exactly the "I can't un-pause" bug this fixes. This checks
+      // assist_is_paused() on every press: if `paused` is set, resume it
+      // the same way a touch tap does (sendTogglePause()); otherwise
+      // fall through to a normal Escape press, unchanged from before.
+      var backDown = !!(pad.buttons[8] && pad.buttons[8].pressed);
+      if (backDown && !gpButtonState[8]) {
+        var isPaused = false;
+        if (typeof Module !== "undefined" && Module.ccall) {
+          try { isPaused = Module.ccall("assist_is_paused", "number", [], []) === 1; } catch (e) {}
+        }
+        if (isPaused) {
+          sendTogglePause();
+        } else {
+          var escK = KEYS.Escape;
+          document.getElementById("canvas").focus();
+          dispatchKey("keydown", escK[0], escK[1], escK[2]);
+          gpBackEscapeDown = true;
+        }
+      } else if (!backDown && gpButtonState[8] && gpBackEscapeDown) {
+        var escK2 = KEYS.Escape;
+        dispatchKey("keyup", escK2[0], escK2[1], escK2[2]);
+        gpBackEscapeDown = false;
+      }
+      gpButtonState[8] = backDown;
     }
 
     // Start the poll loop unconditionally at load, rather than waiting
