@@ -379,15 +379,16 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 // from any of this: that level ends through sector special 11 (the
 // damaging floor you teleport into once killing both Barons runs
 // A_BossDeath and lowers every sector tagged 666, p_enemy.c), which is
-// sector state, not a line. Its Level Hints entry carries that instead. A locked door's special
-// stays put (so it keeps showing) unless it's the D1 "opens once,
-// permanently" variant (32/33/34), which -- like a found secret --
-// clears itself back to a plain special the instant it's used
-// (EV_VerticalDoor, p_doors.c), so a door you've already opened for good
-// naturally stops needing the reminder; the DR "opens every time, if you
-// still have the key" variant (26/27/28) never clears and neither do the
-// remote/switch-triggered lock checks (99/133-137), so those stay marked
-// for the rest of the level.
+// sector state, not a line. Its Level Hints entry carries that instead.
+//
+// A locked door's special stays put (so it keeps showing) unless it's
+// the D1 "opens once, permanently" variant (32/33/34), which -- like a
+// found secret -- clears itself back to a plain special the instant
+// it's used (EV_VerticalDoor, p_doors.c), so a door you've already
+// opened for good naturally stops needing the reminder; the DR "opens
+// every time, if you still have the key" variant (26/27/28) never
+// clears and neither do the remote/switch-triggered lock checks
+// (99/133-137), so those stay marked for the rest of the level.
 #define ASSIST_POI_SECRET     1
 #define ASSIST_POI_KEY_BLUE   2
 #define ASSIST_POI_KEY_RED    3
@@ -399,6 +400,7 @@ EMSCRIPTEN_KEEPALIVE int *assist_get_map_bounds(void)
 #define ASSIST_POI_DOOR_YELLOW 9
 #define ASSIST_POI_SWITCH      10
 #define ASSIST_POI_EXIT_SECRET 11
+#define ASSIST_POI_SECRET_TRIGGER 12
 
 #define ASSIST_MAXPOI 64
 static int assist_poi_buf[ASSIST_MAXPOI * 3]; // per POI: x, y, type
@@ -443,6 +445,50 @@ static int assist_line_has_switch(line_t *ld)
             assist_texture_is_switch(sides[sidenum].bottomtexture))
             return 1;
     }
+    return 0;
+}
+
+// Not every secret opens via a line you'd ever recognize as a switch.
+// E1M3 (found through real play -- a player couldn't tell how to reach
+// several secrets that were plainly visible but walled off) has both:
+// a plain STONE-textured wall right on the secret's own boundary that
+// just needs Use pressed against it (line special 62/63, dispatched by
+// P_UseSpecialLine in p_switch.c -- that function fires on ANY special
+// number when the player presses Use, whether or not a switch texture
+// is present; P_ChangeSwitchTexture only *updates* one if there already
+// is one, it doesn't require one first), and a walk-over trigger placed
+// somewhere else on the map entirely, textured like an ordinary wall
+// (special 2/10/88/90 etc., dispatched by P_CrossSpecialLine in
+// p_spec.c -- no switch involved by definition, it fires just by
+// crossing the line). assist_line_has_switch above can never catch
+// either kind, since both are deliberately texture-invisible by design
+// -- that's the classic "find the secret" trick, and it's also
+// precisely what leaves a player with no way to know how.
+//
+// So this checks the *sector*, not the texture: does this line either
+// directly border a sector that's still secret (sector->special == 9,
+// same "not yet entered" check assist_scan_pois uses for the secret
+// dot itself), or share that sector's tag from somewhere else on the
+// map? Either one means triggering this exact line is how that secret
+// opens, whether or not it looks like anything special. Once the
+// secret's actually found, sector->special resets to 0 (same mechanism
+// the secret dot itself relies on), so this stops matching and the
+// marker disappears right along with it -- no separate bookkeeping.
+static int assist_line_opens_secret(line_t *ld)
+{
+    int i, s;
+    for (s = 0; s < 2; s++)
+    {
+        int sidenum = ld->sidenum[s];
+        if (sidenum < 0 || sidenum >= numsides)
+            continue;
+        if (sides[sidenum].sector->special == 9)
+            return 1;
+    }
+    if (ld->tag != 0)
+        for (i = 0; i < numsectors; i++)
+            if (sectors[i].special == 9 && sectors[i].tag == ld->tag)
+                return 1;
     return 0;
 }
 
@@ -519,6 +565,16 @@ static void assist_scan_pois(void)
             type = ASSIST_POI_DOOR_RED;
         else if (special == 27 || special == 34 || special == 136 || special == 137)
             type = ASSIST_POI_DOOR_YELLOW;
+        else if (special != 0 && assist_line_opens_secret(&lines[i]))
+            // Checked before the generic switch fallback below: this is
+            // strictly more useful information when it applies ("this
+            // exact line opens that secret" beats "this is *a* switch"),
+            // and it also catches secret triggers with no switch texture
+            // at all -- assist_line_has_switch would never fire for those,
+            // so without this check they'd fall through to no marker at
+            // all. See assist_line_opens_secret's own comment for why
+            // that's a real, not hypothetical, category of secret here.
+            type = ASSIST_POI_SECRET_TRIGGER;
         else if (special != 0 && assist_line_has_switch(&lines[i]))
             // Fallback, not a first check: a switch-textured line with one
             // of the specific specials above (e.g. a keycard-locked door

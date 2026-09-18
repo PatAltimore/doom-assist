@@ -1031,8 +1031,9 @@
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c"></span>Exit</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae85c; border-radius:0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);"></span>Secret exit</div>
           <div class="map-legend-item"><span class="map-legend-swatch" style="background:#3ae8e8; border-radius:0; clip-path: polygon(50% 0%, 0% 100%, 100% 100%);"></span>Switch</div>
+          <div class="map-legend-item"><span class="map-legend-swatch" style="background:#e8963a; border-radius:0; clip-path: polygon(50% 0%, 0% 100%, 100% 100%);"></span>Secret trigger</div>
         </div>
-        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it. A green diamond is a <em>secret</em> exit, not the normal one -- E1M3 has both, a long way apart. E1M8 is the one map with no exit marker at all: it has no exit switch, and ends when you kill both Barons.</p>
+        <p class="ack-note">Walls only appear once you've actually seen them (DOOM's own automap fog-of-war, <code>ML_MAPPED</code>) -- secrets, keys, doors, teleporters, and the exit are always marked, even in unexplored territory. A door's square matches the color of the key that opens it. A green diamond is a <em>secret</em> exit, not the normal one -- E1M3 has both, a long way apart. E1M8 is the one map with no exit marker at all: it has no exit switch, and ends when you kill both Barons. An orange triangle is what opens a secret that has no visible switch at all -- sometimes it's a plain wall you have to press Use against, sometimes it's a trip line somewhere else on the map entirely; walking near or interacting with that exact spot is what does it.</p>
       </div>
 
       <div id="cheats-view" class="assist-tabpanel" role="tabpanel" aria-labelledby="tab-cheats" hidden>
@@ -1497,7 +1498,15 @@
       // suits a spoiler you didn't ask for: it distinguishes the two
       // without announcing "there's a secret exit here" louder than the
       // real one.
-      11: "#3ae85c"
+      11: "#3ae85c",
+      // Secret trigger (12): the switch triangle's shape (it IS something
+      // you interact with), in the secret's own orange -- same pairing
+      // logic as doors/keys above, so a triangle in secret-orange reads
+      // as "this is how that orange dot opens" rather than an unrelated
+      // switch. Deliberately not a new color, since this and a real
+      // switch already share cyan's "you interact with this" meaning as
+      // shapes; the color is what ties it to a specific secret instead.
+      12: "#e8963a"
     };
     var mapCanvas = document.getElementById("map-canvas");
     var mapCtx = mapCanvas.getContext("2d");
@@ -1569,11 +1578,11 @@
           // that happen to coincide.
           if (poiType >= 7 && poiType <= 9) {
             mapCtx.fillRect(pp[0] - 5, pp[1] - 5, 10, 10);
-          } else if (poiType === 10) {
-            // Switch marker: an upward-pointing triangle, so it reads as
-            // distinct from both the door squares and the key/item dots
-            // at a glance -- a switch isn't a pickup and isn't a door,
-            // it's an action you take on the wall.
+          } else if (poiType === 10 || poiType === 12) {
+            // Switch marker (10, cyan) and secret trigger (12, secret's
+            // own orange -- see MAP_POI_COLORS' own comment) share this
+            // triangle shape: both are "an action you take on the wall",
+            // not a pickup or a door. Color is what tells them apart.
             mapCtx.beginPath();
             mapCtx.moveTo(pp[0], pp[1] - 6);
             mapCtx.lineTo(pp[0] - 6, pp[1] + 5);
