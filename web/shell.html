@@ -218,7 +218,7 @@
     }
     .mp-share-btn + .mp-share-btn { border-left: 2px solid var(--bevel-dark); }
     .mp-share-btn:hover { background: var(--red-bright); }
-    .mp-qr-wrap { margin: 10px 0; }
+    .mp-qr-wrap { margin-bottom: 10px; }
     /* image-rendering keeps the modules hard-edged when the browser
        scales the canvas (hi-dpi screens, page zoom) -- blurry edges are
        what make a camera fail to lock on. The bevel matches the code
@@ -237,6 +237,13 @@
       font-size: 14px;
       color: var(--text-dim);
       margin-top: 4px;
+    }
+    /* On a phone the overlay is only as tall as the game canvas behind
+       it (~220px), which fits the share buttons and the QR but not the
+       caption line under it -- the code sitting right under the buttons
+       is self-explanatory, so the caption is what gives way. */
+    @media (max-width: 520px) {
+      .mp-qr-caption { display: none; }
     }
     .mp-join-row {
       display: flex;
@@ -893,7 +900,14 @@
                 <button class="assist-btn mp-btn" id="mp-join" type="button">Join</button>
               </div>
             </div>
-            <div class="mp-code-display" id="mp-code-display" hidden></div>
+            <!-- Host screen order, top to bottom: share buttons, QR code,
+                 room code, status. The code used to sit first, but on a
+                 phone the overlay is only as tall as the game canvas
+                 behind it, and the QR (the tall item) got clipped at the
+                 bottom. The QR is the thing worth having fully visible --
+                 the code is also inside every link/QR anyway, so it's the
+                 one that can afford to be down where scrolling is
+                 needed. -->
             <!-- Deliberately not navigator.share(): two real phone tests
                  (see the JS comment above these buttons) showed the OS
                  share sheet's "Mail"/"Messages" targets not reliably
@@ -908,19 +922,15 @@
               <button type="button" class="mp-share-btn" id="mp-share-text">Text</button>
               <button type="button" class="mp-share-btn" id="mp-share-copy">Copy</button>
             </div>
-            <div class="mp-status" id="mp-status" hidden></div>
             <!-- Scannable version of the same invite link the buttons
                  above send (see MpQr in the JS below). Always drawn
-                 black-on-white by the encoder, regardless of theme.
-                 Deliberately *after* the status line: on a phone the
-                 overlay is only as tall as the game canvas behind it,
-                 so anything tall enough to overflow has to be the thing
-                 that scrolls, not the "waiting for the other player"
-                 message that says what's happening. -->
+                 black-on-white by the encoder, regardless of theme. -->
             <div class="mp-qr-wrap" id="mp-qr-wrap" hidden>
               <canvas class="mp-qr" id="mp-qr" role="img" aria-label="QR code that opens the invite link"></canvas>
               <div class="mp-qr-caption">Or have them scan this to join</div>
             </div>
+            <div class="mp-code-display" id="mp-code-display" hidden></div>
+            <div class="mp-status" id="mp-status" hidden></div>
           </div>
         </div>
       </div>
