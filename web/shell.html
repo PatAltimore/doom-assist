@@ -1106,6 +1106,13 @@
             No Monsters (NoMo)
           </label>
         </div>
+        <div class="cheat-row">
+          <label class="cheat-checkbox-label" for="cheat-regen">
+            <input type="checkbox" id="cheat-regen">
+            Regenerate Health
+          </label>
+        </div>
+        <p class="cheat-desc">Restores 1% health every second, up to 100%.</p>
         <p class="cheat-desc">Applies the next time a level starts -- warp below, or choose New Game from the title menu. Doesn't remove monsters already spawned in a level you're mid-way through.</p>
         <div class="cheat-row">
           <select class="assist-select" id="warp-level"></select>
@@ -1806,6 +1813,15 @@
       logAction("cheat:nomonsters",
         e.target.checked ? "Armed No Monsters for the next level start" : "Disarmed No Monsters",
         [{ slug: "p-mobj-c", label: "Map objects" }]);
+    });
+
+    document.getElementById("cheat-regen").addEventListener("change", function (e) {
+      if (typeof Module === "undefined" || !Module.ccall) return;
+      try { Module.ccall("assist_set_regen", null, ["number"], [e.target.checked ? 1 : 0]); }
+      catch (err) { /* engine not ready yet */ }
+      logAction("cheat:regen",
+        e.target.checked ? "Enabled Regenerate Health" : "Disabled Regenerate Health",
+        [{ slug: "p-user-c", label: "Player logic" }]);
     });
 
     // ---- Pause / resume ----

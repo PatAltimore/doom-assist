@@ -226,6 +226,8 @@ void P_DeathThink (player_t* player)
 //
 // P_PlayerThink
 //
+void assist_regen_tick(player_t* player); // assist.c
+
 void P_PlayerThink (player_t* player)
 {
     ticcmd_t*		cmd;
@@ -253,6 +255,9 @@ void P_PlayerThink (player_t* player)
 	P_DeathThink (player);
 	return;
     }
+
+    // doom-assist: Regenerate Health cheat (see assist.c)
+    assist_regen_tick (player);
     
     // Move around.
     // Reactiontime is used to prevent movement

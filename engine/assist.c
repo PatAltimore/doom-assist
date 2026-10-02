@@ -156,6 +156,40 @@ EMSCRIPTEN_KEEPALIVE int assist_get_nomonsters(void)
 }
 
 // -----------------------------------------------------------------------
+// Regenerate Health
+// -----------------------------------------------------------------------
+// While enabled, the console player gains 1 health (1% of the normal
+// 100 maximum) every TICRATE game tics, i.e. once per second. Driven from
+// P_PlayerThink (p_user.c), which only runs while the game is actually
+// simulating (not paused) and only reaches this call for a living player.
+// Regeneration never pushes health above 100; health already above 100
+// (soulsphere/megasphere) is left alone rather than reduced.
+static int assist_regen_flag;
+static int assist_regen_tics;
+
+EMSCRIPTEN_KEEPALIVE void assist_set_regen(int on)
+{
+    assist_regen_flag = on ? 1 : 0;
+    assist_regen_tics = 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int assist_get_regen(void) { return assist_regen_flag; }
+
+void assist_regen_tick(player_t *player)
+{
+    if (!assist_regen_flag || player != &players[consoleplayer])
+        return;
+    if (++assist_regen_tics < TICRATE)
+        return;
+    assist_regen_tics = 0;
+    if (player->health < 100)
+    {
+        player->health++;
+        player->mo->health = player->health;
+    }
+}
+
+// -----------------------------------------------------------------------
 // Twin-stick touch controls
 // -----------------------------------------------------------------------
 // Two independent sticks (web/shell.html): a left one for movement
