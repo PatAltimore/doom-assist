@@ -2228,11 +2228,43 @@
       return fallback;
     }
 
+    // A button counts as down if the browser says pressed OR its analog
+    // value is past half travel. Triggers on some drivers/browsers only
+    // update .value (pressed stays false), which silently killed Fire.
+    function gpDown(pad, i) {
+      var b = pad.buttons[i];
+      return !!b && (b.pressed || b.value > 0.5);
+    }
+
+    // Non-"standard" mappings (some Bluetooth/Firefox/older-driver
+    // combos) put things elsewhere. Best-effort fallback: sticks stay on
+    // axes 0/1 and right-stick X is axis 2 (XInput order) or 3 (DirectInput
+    // order, where axis 2 is a combined trigger axis); triggers may be
+    // axes, not buttons. Standard pads never take these paths.
+    function gpRightX(pad) {
+      if (pad.mapping === "standard") return pad.axes[2] || 0;
+      if (pad.axes.length >= 6) return pad.axes[3] || 0;
+      return pad.axes[2] || 0;
+    }
+    function gpFireDown(pad) {
+      if (gpDown(pad, 7)) return true;
+      if (pad.mapping !== "standard") {
+        // Triggers reported as axes rest at -1 and travel to +1.
+        if (pad.axes.length >= 6 && (pad.axes[5] || 0) > 0.3) return true;
+      }
+      return false;
+    }
+
+    // Last values actually sent to the engine; only send on change
+    // rather than re-sending identical values every frame.
+    var gpSent = { mx: null, my: null, tx: null };
+
     function pollGamepad() {
       requestAnimationFrame(pollGamepad);
-      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      var pads;
+      try { pads = navigator.getGamepads ? navigator.getGamepads() : []; } catch (e) { return; }
       var pad = pickControlPad(pads);
-      if (!pad) return;
+      if (!pad || pad.connected === false) return;
 
       // Left stick: move + strafe, right stick: turn -- identical meaning
       // to the touch sticks feeding these same two exports (see the two
@@ -2240,24 +2272,30 @@
       // -1..1 with "up" as negative Y, the same sign convention
       // assist_apply_touch_controls (assist.c) expects from the touch
       // stick's screen-space dy, so no inversion is needed here.
-      var lx = pad.axes[0] || 0, ly = pad.axes[1] || 0, rx = pad.axes[2] || 0;
+      var lx = pad.axes[0] || 0, ly = pad.axes[1] || 0, rx = gpRightX(pad);
       if (Math.abs(lx) < GP_DEADZONE) lx = 0;
       if (Math.abs(ly) < GP_DEADZONE) ly = 0;
       if (Math.abs(rx) < GP_DEADZONE) rx = 0;
 
+      var mx = Math.round(lx * 100), my = Math.round(ly * 100), tx = Math.round(rx * 100);
       if (typeof Module !== "undefined" && Module.ccall) {
-        try { Module.ccall("assist_set_move", null, ["number", "number"], [Math.round(lx * 100), Math.round(ly * 100)]); }
-        catch (e) { /* engine not ready yet */ }
-        try { Module.ccall("assist_set_turn", null, ["number"], [Math.round(rx * 100)]); }
-        catch (e) { /* engine not ready yet */ }
+        if (mx !== gpSent.mx || my !== gpSent.my) {
+          try { Module.ccall("assist_set_move", null, ["number", "number"], [mx, my]); gpSent.mx = mx; gpSent.my = my; }
+          catch (e) { /* engine not ready yet; retry next frame */ }
+        }
+        if (tx !== gpSent.tx) {
+          try { Module.ccall("assist_set_turn", null, ["number"], [tx]); gpSent.tx = tx; }
+          catch (e) { /* engine not ready yet; retry next frame */ }
+        }
       }
 
       for (var keyName in GP_KEY_TO_BUTTONS) {
         var btnIdxs = GP_KEY_TO_BUTTONS[keyName];
         var down = false;
         for (var bi = 0; bi < btnIdxs.length; bi++) {
-          if (pad.buttons[btnIdxs[bi]] && pad.buttons[btnIdxs[bi]].pressed) { down = true; break; }
+          if (gpDown(pad, btnIdxs[bi])) { down = true; break; }
         }
+        if (keyName === "Control" && !down) down = gpFireDown(pad);
         if (down === !!gpKeyState[keyName]) continue; // no change since last frame
         gpKeyState[keyName] = down;
         var k = KEYS[keyName];
@@ -2267,7 +2305,7 @@
 
       for (var wi = 0; wi < GP_WEAPON_BUTTONS.length; wi++) {
         var wIdx = GP_WEAPON_BUTTONS[wi];
-        var weaponDown = !!(pad.buttons[wIdx] && pad.buttons[wIdx].pressed);
+        var weaponDown = gpDown(pad, wIdx);
         if (weaponDown && !gpButtonState[wIdx]) {
           if (typeof Module !== "undefined" && Module.ccall) {
             try { Module.ccall("assist_switch_weapon", null, ["number"], [1]); } catch (e) {}
@@ -2291,7 +2329,7 @@
       // assist_is_paused() on every press: if `paused` is set, resume it
       // the same way a touch tap does (sendTogglePause()); otherwise
       // fall through to a normal Escape press, unchanged from before.
-      var backDown = !!(pad.buttons[8] && pad.buttons[8].pressed);
+      var backDown = gpDown(pad, 8);
       if (backDown && !gpButtonState[8]) {
         var isPaused = false;
         if (typeof Module !== "undefined" && Module.ccall) {
@@ -2327,12 +2365,13 @@
     pollGamepad();
 
     window.addEventListener("gamepadconnected", function (e) {
-      toast("Controller connected: " + e.gamepad.id);
+      toast("Controller connected" + (e.gamepad.mapping === "standard" ? "" : " (non-standard layout)") + ": " + e.gamepad.id);
     });
     window.addEventListener("gamepaddisconnected", function (e) {
       toast("Controller disconnected");
       gpButtonState = {};
       gpKeyState = {};
+      gpSent = { mx: 0, my: 0, tx: 0 };
       if (typeof Module !== "undefined" && Module.ccall) {
         try { Module.ccall("assist_set_move", null, ["number", "number"], [0, 0]); } catch (err) {}
         try { Module.ccall("assist_set_turn", null, ["number"], [0]); } catch (err) {}
