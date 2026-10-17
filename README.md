@@ -1,6 +1,6 @@
 # doom-assist
 
-A browser-playable build of the original 1993 *DOOM* (shareware episode, "Knee-Deep in the Dead"), with an "assist mode" sidebar (real cheat codes, the game's own automap, per-map hints) that links out to [Code Museum](https://blue-rock-0e6a0831e.7.azurestaticapps.net/#/doom)'s annotated source pages for the underlying code.
+A browser-playable build of the original 1993 *DOOM* (shareware episode, "Knee-Deep in the Dead"), with an "assist mode" sidebar (real cheat codes, the game's own automap, per-map hints) that links out to [Code Museum](https://pataltimore.github.io/code-museum/#/doom)'s annotated source pages for the underlying code.
 
 Play the game at [https://black-bush-058f51c1e.7.azurestaticapps.net/](https://black-bush-058f51c1e.7.azurestaticapps.net/).
 
